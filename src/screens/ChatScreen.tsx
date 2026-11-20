@@ -48,6 +48,9 @@ const LOG_PREFIX = '[ChatScreen]';
 const SOCKET_URL = CHAT_SERVER_URL;
 const API_BASE_URL = `${SOCKET_URL}/api`;
 
+// Space between the message input bar and the open keyboard
+const KEYBOARD_GAP = 12;
+
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
 type NavigationProp = StackNavigationProp<RootStackParamList, 'Chat'>;
 
@@ -957,7 +960,9 @@ useEffect(() => {
       }}
     >
       <StatusBar barStyle="light-content" backgroundColor="#075E54" translucent={false} />
-      <View style={{ height: Platform.OS === 'ios' ? insets.top : 0, backgroundColor: '#075E54' }} />
+      {/* Safe area: keep the header BELOW the status bar (time / network / battery).
+          Needed on Android too: with targetSdk 35+ the app is edge-to-edge and draws under it. */}
+      <View style={{ height: insets.top, backgroundColor: '#075E54' }} />
 
       {/* ── Header ── */}
       <View style={styles.header}>
@@ -1108,7 +1113,8 @@ useEffect(() => {
           <View
             style={[
               styles.inputArea,
-              { marginBottom: keyboardVisible ? 4 : (insets.bottom > 0 ? insets.bottom + 4 : 8) },
+              // Keyboard open: leave a clear gap between the input bar and the keyboard
+              { marginBottom: keyboardVisible ? KEYBOARD_GAP : (insets.bottom > 0 ? insets.bottom + 4 : 8) },
             ]}
           >
             <View style={styles.inputContainer}>
