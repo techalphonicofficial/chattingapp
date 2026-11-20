@@ -18,9 +18,15 @@ import {
   Linking,
   Animated,
   PermissionsAndroid,
+  KeyboardEvent,
+  LayoutChangeEvent,
+  Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
+import { CHAT_SERVER_URL } from '../config/api';
+import { formatClock, formatDayLabel, isSameDay } from '../utils/time';
+import { setActiveChatUser } from '../services/notificationService';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { io, Socket } from 'socket.io-client';
@@ -39,7 +45,7 @@ import {
 const LOG_PREFIX = '[ChatScreen]';
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const SOCKET_URL = 'http://192.168.1.5:5000';
+const SOCKET_URL = CHAT_SERVER_URL;
 const API_BASE_URL = `${SOCKET_URL}/api`;
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
@@ -65,6 +71,13 @@ const ChatScreen = () => {
   const [exportingPDF, setExportingPDF] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  // Android keyboard handling: with targetSdk 35+/36 the app is edge-to-edge, so
+  // adjustResize no longer shrinks the screen and the keyboard covered the input bar.
+  // We measure how much the screen actually shrank and pad only the part it didn't.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+  const baseHeightRef = useRef(0);
+  const keyboardOpenRef = useRef(false);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
   // Track whether we've done the initial scroll-to-bottom
@@ -85,22 +98,40 @@ const log = {
     [room?.id, userId, contactId]
   );
 
+  // ─── PUSH: no notification popup for the chat that is open on screen ─────
+  useFocusEffect(
+    React.useCallback(() => {
+      setActiveChatUser(contactId);
+      return () => setActiveChatUser(null);
+    }, [contactId])
+  );
+
   // ─── KEYBOARD LISTENERS ──────────────────────────────────────────────────
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
-    const showSub = Keyboard.addListener(showEvent, () => {
+    const showSub = Keyboard.addListener(showEvent, (e: KeyboardEvent) => {
+      keyboardOpenRef.current = true;
+      setKeyboardHeight(e?.endCoordinates?.height || 0);
       setKeyboardVisible(true);
       scrollToBottom(true);
     });
     const hideSub = Keyboard.addListener(hideEvent, () => {
+      keyboardOpenRef.current = false;
+      setKeyboardHeight(0);
       setKeyboardVisible(false);
+    });
+
+    // Rotation / window size change: forget the old full height, next layout sets it again
+    const dimSub = Dimensions.addEventListener('change', () => {
+      baseHeightRef.current = 0;
     });
 
     return () => {
       showSub.remove();
       hideSub.remove();
+      dimSub.remove();
     };
   }, []);
 
@@ -302,6 +333,21 @@ useEffect(() => {
   // ── Message events ────────────────────────────────────────────────────────
   socket.on('receive_message', (newMessage: any) => {
     if (!newMessage?.id) return;
+
+    // Only messages of THIS conversation (me <-> this contact) belong on this screen.
+    // Without this check a message from someone else showed up in whichever chat was open,
+    // and replying there saved the reply against the wrong person.
+    const msgSender = Number(newMessage.sender_id);
+    const msgReceiver = Number(newMessage.receiver_id);
+    const me = Number(userId);
+    const isThisChat =
+      (msgSender === me && msgReceiver === contactId) ||
+      (msgSender === contactId && msgReceiver === me);
+    if (!isThisChat) {
+      log.info('Message for another chat ignored:', newMessage.id);
+      return;
+    }
+
     log.info('Message received:', newMessage.id);
 
     setMessages((prev) => {
@@ -333,12 +379,17 @@ useEffect(() => {
     scrollToBottom();
   });
 
-  socket.on('messages_read', (data: any) => {
-    if (data?.room_id !== roomId) return;
+  // Backend emits 'message_status_update' when the contact has read my messages
+  socket.on('message_status_update', (data: any) => {
+    if (data?.status !== 'read') return;
+    if (String(data?.room_id) !== String(roomId)) return;
+    if (String(data?.reader_id) !== String(contactId)) return;
     log.info('Messages read event:', data);
     setMessages((prev) =>
       prev.map((msg) =>
-        msg.sender_id === userId ? { ...msg, is_read: true, status: 'read' } : msg
+        String(msg.sender_id) === String(userId) && String(msg.receiver_id) === String(contactId)
+          ? { ...msg, is_read: true, status: 'read' }
+          : msg
       )
     );
   });
@@ -358,7 +409,7 @@ useEffect(() => {
     socket.off('reconnect_error');
     socket.off('connect_error');
     socket.off('receive_message');
-    socket.off('messages_read');
+    socket.off('message_status_update');
     socket.disconnect();
     socketRef.current = null;
     reconnectAttempts.current = 0;
@@ -375,24 +426,20 @@ useEffect(() => {
   // ─── MARK MESSAGES AS READ ─────────────────────────────────────────────────
   const markMessagesAsRead = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/messages/read`, {
+      // Backend route is /messages/mark-read; it also notifies the contact over the socket.
+      // other_user_id limits it to this conversation instead of the whole company room.
+      const response = await fetch(`${API_BASE_URL}/messages/mark-read`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
           accept: '*/*',
         },
-        body: JSON.stringify({ room_id: roomId.toString() }),
+        body: JSON.stringify({ room_id: roomId.toString(), other_user_id: contactId }),
       });
 
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          socketRef.current?.emit('mark_read', {
-            room_id: roomId,
-            user_id: userId,
-          });
-        }
+      if (!response.ok) {
+        log.warn('Mark as read failed with status', response.status);
       }
     } catch (error) {
       console.error('Error marking messages as read:', error);
@@ -529,11 +576,9 @@ useEffect(() => {
 
     sortedMessages.forEach((msg) => {
       const isMe = String(msg.sender_id) === String(userId);
-      const msgDate = new Date(msg.created_at || Date.now());
-      const dateLabel = msgDate.toLocaleDateString([], {
-        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-      });
-      const time = msgDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const msgDate = msg.created_at || new Date().toISOString();
+      const dateLabel = formatDayLabel(msgDate);
+      const time = formatClock(msgDate);
 
       if (dateLabel !== lastDate) {
         html += `<div class="clearfix"></div><div class="date-divider">${dateLabel}</div>`;
@@ -757,7 +802,11 @@ useEffect(() => {
         body: formData,
       });
 
-      const result = await response.json();
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || !result?.id) {
+        throw new Error(result?.error || result?.message || `Server error (${response.status})`);
+      }
 
       if (result && result.id && optimisticMsg) {
         setMessages((prev) =>
@@ -770,26 +819,36 @@ useEffect(() => {
           prev.some((m) => m.id === result.id) ? prev : [...prev, result]
         );
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Send error:', error);
       if (!fileData && optimisticMsg) {
         setMessages((prev) => prev.filter((m) => m.id !== optimisticMsg.id));
         setInputText(text || '');
-        Alert.alert('Error', 'Failed to send message. Please try again.');
       }
+      Alert.alert('Message not sent', error?.message || 'Failed to send message. Please try again.');
     }
   };
   sendMessageRef.current = sendMessage;
 
   // ─── RENDER MESSAGE BUBBLE ─────────────────────────────────────────────────
-  const renderMessage = ({ item }: any) => {
+  const renderMessage = ({ item, index }: any) => {
     const isMe = String(item.sender_id) === String(userId);
     const isRead = item.is_read || item.status === 'read';
     const isSending = item.is_optimistic;
     const fullFileUrl = item.file_url ? getFullUrl(item.file_url) : null;
     const fileInfo = fullFileUrl ? getFileTypeInfo(fullFileUrl) : null;
+    // WhatsApp style day chip ("Today", "Yesterday", ...) above the first message of each day
+    const createdAt = item.created_at || new Date().toISOString();
+    const prev = index > 0 ? messages[index - 1] : null;
+    const showDayChip = !prev || !isSameDay(prev.created_at || new Date().toISOString(), createdAt);
 
     return (
+      <>
+      {showDayChip ? (
+        <View style={styles.dayChipWrap}>
+          <Text style={styles.dayChip}>{formatDayLabel(createdAt)}</Text>
+        </View>
+      ) : null}
       <View
         style={[
           styles.messageBubble,
@@ -852,10 +911,7 @@ useEffect(() => {
         ) : null}
         <View style={styles.messageFooter}>
           <Text style={[styles.timestamp, isMe && { color: '#047857' }]}>
-            {new Date(item.created_at || Date.now()).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
+            {formatClock(createdAt)}
           </Text>
           {isMe && (
             <Text
@@ -873,12 +929,33 @@ useEffect(() => {
           )}
         </View>
       </View>
+      </>
     );
   };
 
+  // Extra bottom space on Android = keyboard height minus whatever the OS already resized.
+  // Old Android (adjustResize works): screen shrinks by the keyboard height -> 0 extra.
+  // Android 15/16 edge-to-edge (no resize): screen stays the same -> full keyboard height.
+  const androidKeyboardPadding =
+    Platform.OS === 'android' && keyboardVisible && baseHeightRef.current > 0
+      ? Math.max(0, keyboardHeight - Math.max(0, baseHeightRef.current - containerHeight))
+      : 0;
+
   // ─── RENDER ────────────────────────────────────────────────────────────────
   return (
-    <View style={styles.container}>
+    <View
+      style={styles.container}
+      onLayout={({ nativeEvent }: LayoutChangeEvent) => {
+        const h = nativeEvent.layout.height;
+        // Full height = largest height seen while the keyboard is closed. Taking the max
+        // matters because on older Android the screen can shrink just BEFORE the keyboard
+        // event fires; that smaller height must not be mistaken for the full height.
+        if (!keyboardOpenRef.current) {
+          baseHeightRef.current = Math.max(baseHeightRef.current, h);
+        }
+        setContainerHeight(h);
+      }}
+    >
       <StatusBar barStyle="light-content" backgroundColor="#075E54" translucent={false} />
       <View style={{ height: Platform.OS === 'ios' ? insets.top : 0, backgroundColor: '#075E54' }} />
 
@@ -968,7 +1045,7 @@ useEffect(() => {
         imageStyle={{ opacity: 0.03, resizeMode: 'center' }}
       >
         <KeyboardAvoidingView
-          style={{ flex: 1 }}
+          style={{ flex: 1, paddingBottom: androidKeyboardPadding }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
@@ -1242,6 +1319,17 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   timestamp: { fontSize: 11, color: '#8696A0' },
+  dayChipWrap: { alignItems: 'center', marginVertical: 8 },
+  dayChip: {
+    fontSize: 12,
+    color: '#54656F',
+    backgroundColor: '#E1F2FB',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    overflow: 'hidden',
+    elevation: 1,
+  },
   ticks: { fontSize: 14, marginLeft: 2, letterSpacing: -4 },
   readTicks: { color: '#53BDEB' },
   sentTicks: { color: '#8696A0' },

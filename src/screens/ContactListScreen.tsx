@@ -7,9 +7,25 @@ import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navig
 import { StackNavigationProp } from '@react-navigation/stack';
 import { io, Socket } from 'socket.io-client';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { CHAT_SERVER_URL } from '../config/api';
+import { formatListTime, parseServerDate } from '../utils/time';
 
-const BASE_URL = 'http://192.168.1.5:5000';
+const BASE_URL = CHAT_SERVER_URL;
 const SOCKET_URL = BASE_URL;
+
+// Backend sends last_message_time; live socket updates set last_message_at. Use whichever exists.
+const lastMessageTime = (u: any): number => {
+  const d = parseServerDate(u?.last_message_at || u?.last_message_time);
+  return d ? d.getTime() : 0;
+};
+
+// WhatsApp style: latest conversation first; users with no messages at the bottom, by name
+const sortByLatestChat = (list: any[]) =>
+  [...list].sort((a, b) => {
+    const diff = lastMessageTime(b) - lastMessageTime(a);
+    if (diff !== 0) return diff;
+    return String(a.name || a.user_id || '').localeCompare(String(b.name || b.user_id || ''));
+  });
 
 type ChatListRouteProp = RouteProp<RootStackParamList, 'ChatList'>;
 type NavigationProp = StackNavigationProp<RootStackParamList, 'ChatList'>;
@@ -63,7 +79,7 @@ const ContactListScreen = () => {
       });
       const data = await response.json();
       if (data.status && Array.isArray(data.users)) {
-        setUsers(data.users);
+        setUsers(sortByLatestChat(data.users));
       }
     } catch (error) {
       console.error('Silent fetch error:', error);
@@ -90,9 +106,11 @@ const ContactListScreen = () => {
     ]).start();
 
     // Connect socket to listen for new messages and update last_message in list
+    // The backend rejects sockets without a token, so it must be sent here too
     const socket = io(SOCKET_URL, {
       transports: ['websocket'],
       reconnection: true,
+      auth: { token },
     });
     socketRef.current = socket;
 
@@ -102,6 +120,10 @@ const ContactListScreen = () => {
 
     // When any message is received, update that user's last_message instantly
     socket.on('receive_message', (newMessage: any) => {
+      // Only update the list for messages of the company that is open
+      if (room?.id && newMessage?.room_id != null && String(newMessage.room_id) !== String(room.id)) {
+        return;
+      }
       setUsers(prev => {
         // Determine the other user's id in this conversation
         const otherId =
@@ -110,23 +132,22 @@ const ContactListScreen = () => {
             ? String(newMessage.receiver_id)
             : String(newMessage.sender_id);
 
+        const preview =
+          newMessage.message ||
+          (newMessage.message_type === 'image' ? '📷 Photo' : newMessage.file_url ? '📎 Document' : '');
         const updated = prev.map(u => {
           if (String(u.id) === otherId) {
             return {
               ...u,
-              last_message: newMessage.message || '',
-              last_message_at: newMessage.created_at,
+              last_message: preview,
+              last_message_at: newMessage.created_at || new Date().toISOString(),
               last_message_status: newMessage.status || 'sent',
             };
           }
           return u;
         });
-        // Sort: users with latest messages bubble to the top
-        return [...updated].sort((a, b) => {
-          const aTime = a.last_message_at ? new Date(a.last_message_at).getTime() : new Date(a.created_at).getTime();
-          const bTime = b.last_message_at ? new Date(b.last_message_at).getTime() : new Date(b.created_at).getTime();
-          return bTime - aTime;
-        });
+        // The chat that just got a message moves to the top
+        return sortByLatestChat(updated);
       });
     });
 
@@ -163,7 +184,7 @@ const ContactListScreen = () => {
       });
       const data = await response.json();
       if (data.status && Array.isArray(data.users)) {
-        setUsers(data.users);
+        setUsers(sortByLatestChat(data.users));
       } else {
         Alert.alert('Error', 'Failed to fetch users');
       }
@@ -403,17 +424,9 @@ const ContactListScreen = () => {
 
 
   const renderUserItem = ({ item }: { item: any }) => {
-    const formatTime = (dateStr: string) => {
-      if (!dateStr) return '';
-      const date = new Date(dateStr);
-      const now = new Date();
-      const isToday = date.toDateString() === now.toDateString();
-      return isToday
-        ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-    };
-
-    const timeDisplay = item.last_message_at ? formatTime(item.last_message_at) : formatTime(item.created_at);
+    const lastAt = item.last_message_at || item.last_message_time;
+    // No chat yet -> no time (the user's sign-up date was shown before, which looked like a message time)
+    const timeDisplay = lastAt ? formatListTime(lastAt) : '';
 
     return (
       <TouchableOpacity
@@ -455,9 +468,9 @@ const ContactListScreen = () => {
   const filteredUsers = users.filter((u) => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return true;
-    const nameMatch = u.name?.toLowerCase().includes(q);
-    const userIdMatch = u.user_id?.toLowerCase().includes(q);
-    const mobileMatch = u.mobile_number?.toLowerCase().includes(q);
+    const nameMatch = String(u.name ?? '').toLowerCase().includes(q);
+    const userIdMatch = String(u.user_id ?? '').toLowerCase().includes(q);
+    const mobileMatch = String(u.mobile_number ?? '').toLowerCase().includes(q);
     return nameMatch || userIdMatch || mobileMatch;
   });
 

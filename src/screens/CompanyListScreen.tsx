@@ -8,6 +8,11 @@ import { launchImageLibrary } from 'react-native-image-picker';
 import LinearGradient from 'react-native-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import {
+  registerTokenWithBackend,
+  unregisterTokenFromBackend,
+  consumePendingNotification,
+} from '../services/notificationService';
 
 type CompanyListRouteProp = RouteProp<RootStackParamList, 'CompanyListScreen'>;
 type NavigationProp = StackNavigationProp<RootStackParamList, 'CompanyListScreen'>;
@@ -49,6 +54,10 @@ const CompanyListScreen = () => {
 
   useEffect(() => {
     fetchRooms();
+    // Logged in (fresh login or auto-login): tell the backend this phone's push token,
+    // then open a chat if the app was started by tapping a notification
+    registerTokenWithBackend(token);
+    consumePendingNotification();
   }, []);
 
   const fetchRooms = async () => {
@@ -204,6 +213,8 @@ const CompanyListScreen = () => {
   };
 
   const handleLogout = async () => {
+    // Stop this phone from receiving this user's pushes (needs the token, so before clearing it)
+    await unregisterTokenFromBackend(token);
     try {
       if (AsyncStorage.removeMany) {
         await AsyncStorage.removeMany(['userToken', 'userRole', 'userId']);

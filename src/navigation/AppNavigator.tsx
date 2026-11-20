@@ -10,6 +10,7 @@ import ChatScreen from '../screens/ChatScreen';
 import CompanyListScreen from '../screens/CompanyListScreen';
 import OrderListScreen from '../screens/OrderListScreen';
 import OrderDetailScreen from '../screens/OrderDetailScreen';
+import { navigationRef } from './navigationRef';
 
 export type RootStackParamList = {
   Calculator: undefined;
@@ -26,7 +27,7 @@ const Stack = createStackNavigator<RootStackParamList>();
 
 const AppNavigator = () => {
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
         initialRouteName="Calculator"
         screenOptions={{
