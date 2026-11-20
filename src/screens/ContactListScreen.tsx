@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, StatusBar, Image, TextInput, ActivityIndicator, Alert, Modal } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, StatusBar, Image, TextInput, ActivityIndicator, Alert, Modal, Animated } from 'react-native';
 import { launchImageLibrary } from 'react-native-image-picker';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,7 +8,8 @@ import { StackNavigationProp } from '@react-navigation/stack';
 import { io, Socket } from 'socket.io-client';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
-const SOCKET_URL = 'https://miya-unslumbery-hunter.ngrok-free.dev';
+const BASE_URL = 'http://192.168.1.5:5000';
+const SOCKET_URL = BASE_URL;
 
 type ChatListRouteProp = RouteProp<RootStackParamList, 'ChatList'>;
 type NavigationProp = StackNavigationProp<RootStackParamList, 'ChatList'>;
@@ -20,13 +21,18 @@ const ContactListScreen = () => {
   const { token, userId, room, role } = route.params as any;
 
   const [users, setUsers] = useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
-  
+
+  // Header animation
+  const headerAnim = useRef(new Animated.Value(-60)).current;
+  const listFadeAnim = useRef(new Animated.Value(0)).current;
+
   // All Users Modal State
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [allUsersModalVisible, setAllUsersModalVisible] = useState(false);
   const [loadingAllUsers, setLoadingAllUsers] = useState(false);
-  
+
   // Room Creation State
   const [isModalVisible, setModalVisible] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
@@ -40,6 +46,7 @@ const ContactListScreen = () => {
   const [profileRole, setProfileRole] = useState('employee');
   const [profilePasskey, setProfilePasskey] = useState('');
   const [isUpdating, setIsUpdating] = useState(false);
+  const [currentUser, setCurrentUser] = useState<any>(null);
 
 
   const socketRef = useRef<Socket | null>(null);
@@ -48,7 +55,7 @@ const ContactListScreen = () => {
   // Fetch users silently (no loading spinner) for background refresh
   const fetchUsersSilent = useCallback(async () => {
     try {
-      const baseUrl = 'https://yber.in/api/auth/users';
+      const baseUrl = `${BASE_URL}/api/auth/users`;
       const url = room?.id ? `${baseUrl}?room_id=${room.id}` : baseUrl;
       const response = await fetch(url, {
         method: 'GET',
@@ -65,6 +72,22 @@ const ContactListScreen = () => {
 
   useEffect(() => {
     fetchUsers();
+
+    // Header slide-down + list fade-in animation on mount
+    Animated.parallel([
+      Animated.spring(headerAnim, {
+        toValue: 0,
+        tension: 80,
+        friction: 10,
+        useNativeDriver: true,
+      }),
+      Animated.timing(listFadeAnim, {
+        toValue: 1,
+        duration: 400,
+        delay: 200,
+        useNativeDriver: true,
+      }),
+    ]).start();
 
     // Connect socket to listen for new messages and update last_message in list
     const socket = io(SOCKET_URL, {
@@ -83,6 +106,7 @@ const ContactListScreen = () => {
         // Determine the other user's id in this conversation
         const otherId =
           String(newMessage.sender_id) === String(userId)
+
             ? String(newMessage.receiver_id)
             : String(newMessage.sender_id);
 
@@ -127,9 +151,9 @@ const ContactListScreen = () => {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const baseUrl = 'https://yber.in/api/auth/users';
+      const baseUrl = `${BASE_URL}/api/auth/users`;
       const url = room?.id ? `${baseUrl}?room_id=${room.id}` : baseUrl;
-      
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -155,7 +179,7 @@ const ContactListScreen = () => {
     try {
       setLoadingAllUsers(true);
       setAllUsersModalVisible(true);
-      const response = await fetch('https://yber.in/api/auth/all-users', {
+      const response = await fetch(`${BASE_URL}/api/auth/all-users`, {
         method: 'GET',
         headers: {
           'accept': '*/*',
@@ -183,7 +207,7 @@ const ContactListScreen = () => {
     }
 
     try {
-      const response = await fetch('https://yber.in/api/rooms/map', {
+      const response = await fetch(`${BASE_URL}/api/rooms/map`, {
         method: 'POST',
         headers: {
           'accept': '*/*',
@@ -229,7 +253,7 @@ const ContactListScreen = () => {
       const formData = new FormData();
       formData.append('room_name', newRoomName);
       formData.append('room_type', newRoomType);
-      
+
       if (newRoomLogo) {
         formData.append('room_logo', {
           uri: newRoomLogo.uri,
@@ -238,7 +262,7 @@ const ContactListScreen = () => {
         });
       }
 
-      const response = await fetch('https://yber.in/api/rooms/create', {
+      const response = await fetch(`${BASE_URL}/api/rooms/create`, {
         method: 'POST',
         headers: {
           'accept': '*/*',
@@ -267,6 +291,59 @@ const ContactListScreen = () => {
     }
   };
 
+  const fetchCurrentUser = async () => {
+    try {
+      // 1. Try fetching user details directly by user ID
+      const response = await fetch(`${BASE_URL}/api/auth/users/${userId}`, {
+        method: 'GET',
+        headers: {
+          'accept': '*/*',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await response.json();
+      console.log('Fetched current user by ID:', data);
+
+      const userObj = data.user || (data.status && data.user) || (data.id ? data : null);
+      if (userObj && userObj.id) {
+        setCurrentUser(userObj);
+        setProfileName(userObj.name || '');
+        setProfileRole(userObj.role || role || 'employee');
+        return;
+      }
+    } catch (error) {
+      console.error('Failed to fetch user by ID:', error);
+    }
+
+    // 2. Fallback: Fetch all users and find current user
+    try {
+      const response = await fetch(`${BASE_URL}/api/auth/users`, {
+        method: 'GET',
+        headers: {
+          'accept': '*/*',
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await response.json();
+      if (data.status && Array.isArray(data.users)) {
+        const found = data.users.find((u: any) => String(u.id) === String(userId));
+        if (found) {
+          setCurrentUser(found);
+          setProfileName(found.name || '');
+          setProfileRole(found.role || role || 'employee');
+        }
+      }
+    } catch (error) {
+      console.error('Failed fallback fetch for current user:', error);
+    }
+  };
+
+  const openProfileModal = () => {
+    setProfilePasskey('');
+    fetchCurrentUser();
+    setProfileModalVisible(true);
+  };
+
   const handleUpdateProfile = async () => {
     if (!profilePasskey.trim()) {
       Alert.alert('Error', 'Please enter a passkey');
@@ -275,24 +352,44 @@ const ContactListScreen = () => {
 
     try {
       setIsUpdating(true);
-      const response = await fetch(`https://yber.in/api/auth/users/${userId}`, {
+
+      const body = {
+        name: profileName,
+        user_id: currentUser?.user_id || userId,
+        mobile_number: currentUser?.mobile_number || "",
+        profile_image: currentUser?.profile_image || "",
+        passkey: profilePasskey,
+        role: profileRole,
+        can_view_previous_messages: currentUser?.can_view_previous_messages ?? 0
+      };
+
+      console.log('Updating profile with body:', JSON.stringify(body, null, 2));
+
+      const response = await fetch(`${BASE_URL}/api/auth/users/${userId}`, {
         method: 'PUT',
         headers: {
           'accept': '*/*',
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          name: profileName,
-          role: profileRole,
-          passkey: profilePasskey,
-        }),
+        body: JSON.stringify(body),
       });
 
-      const data = await response.json();
-      if (data.status) {
+      const responseText = await response.text();
+      console.log('Profile Update Response:', responseText);
+
+      let data: any = {};
+      try {
+        data = JSON.parse(responseText);
+      } catch (e) {
+        Alert.alert('Server Error', 'The server returned an invalid response (not JSON).');
+        return;
+      }
+
+      if (data.status || response.ok) {
         Alert.alert('Success', data.message || 'User updated successfully');
         setProfileModalVisible(false);
+        fetchUsersSilent();
       } else {
         Alert.alert('Error', data.message || 'Failed to update user');
       }
@@ -311,7 +408,7 @@ const ContactListScreen = () => {
       const date = new Date(dateStr);
       const now = new Date();
       const isToday = date.toDateString() === now.toDateString();
-      return isToday 
+      return isToday
         ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     };
@@ -319,9 +416,10 @@ const ContactListScreen = () => {
     const timeDisplay = item.last_message_at ? formatTime(item.last_message_at) : formatTime(item.created_at);
 
     return (
-      <TouchableOpacity 
-        style={styles.chatItem} 
+      <TouchableOpacity
+        style={styles.chatItem}
         onPress={() => navigation.navigate('Chat', { contact: item, token, userId, room })}
+        activeOpacity={0.7}
       >
         <View style={styles.avatarPlaceholder}>
           {item.profile_image ? (
@@ -334,38 +432,55 @@ const ContactListScreen = () => {
         </View>
         <View style={styles.chatInfo}>
           <View style={styles.topRow}>
-            <Text style={styles.name}>{item.name || item.user_id || 'Unknown'}</Text>
-            <Text style={styles.time}>{timeDisplay}</Text>
+            <Text style={styles.name} numberOfLines={1}>{item.name || item.user_id || 'Unknown'}</Text>
+            <Text style={[styles.time, item.unread_count > 0 && styles.timeUnread]}>{timeDisplay}</Text>
           </View>
           <View style={styles.bottomRow}>
             <Text style={styles.lastMessage} numberOfLines={1}>
-              {item.last_message_status === 'sent' && <MaterialIcons name="done-all" size={14} color="#34B7F1" />}
-              {item.last_message_status === 'read' && <MaterialIcons name="done-all" size={14} color="#34B7F1" />}
+              {item.last_message_status === 'sent' && <MaterialIcons name="done-all" size={14} color="#8696A0" />}
+              {item.last_message_status === 'read' && <MaterialIcons name="done-all" size={14} color="#53BDEB" />}
               {item.last_message ? ` ${item.last_message}` : ''}
             </Text>
+            {item.unread_count > 0 && (
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadText}>{item.unread_count}</Text>
+              </View>
+            )}
           </View>
         </View>
       </TouchableOpacity>
     );
   };
 
+  const filteredUsers = users.filter((u) => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    const nameMatch = u.name?.toLowerCase().includes(q);
+    const userIdMatch = u.user_id?.toLowerCase().includes(q);
+    const mobileMatch = u.mobile_number?.toLowerCase().includes(q);
+    return nameMatch || userIdMatch || mobileMatch;
+  });
+
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0052CC" />
-      <View style={{ height: insets.top, backgroundColor: '#0052CC' }} />
-      
+      <StatusBar barStyle="light-content" backgroundColor="#075E54" />
+      <View style={{ height: insets.top, backgroundColor: '#075E54' }} />
+
       <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <MaterialIcons name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
         <Text style={styles.headerTitle}>Users</Text>
         <View style={styles.headerIcons}>
           <TouchableOpacity style={styles.iconBtn} onPress={fetchUsers}>
-            <MaterialIcons name="search" size={24} color="#fff" />
+            <MaterialIcons name="refresh" size={22} color="#fff" />
           </TouchableOpacity>
           {role === 'admin' && (
             <TouchableOpacity style={styles.iconBtn} onPress={fetchAllUsers}>
               <MaterialIcons name="group-add" size={24} color="#fff" />
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.iconBtn} onPress={() => setProfileModalVisible(true)}>
+          <TouchableOpacity style={styles.iconBtn} onPress={openProfileModal}>
             <MaterialIcons name="more-vert" size={24} color="#fff" />
           </TouchableOpacity>
 
@@ -373,31 +488,43 @@ const ContactListScreen = () => {
       </View>
 
       <View style={styles.searchBar}>
-        <TextInput 
-          placeholder="Search users..." 
-          style={styles.searchInput}
-          placeholderTextColor="#999"
-        />
+        <View style={styles.searchInputContainer}>
+          <MaterialIcons name="search" size={20} color="#64748B" style={{ marginRight: 8 }} />
+          <TextInput
+            placeholder="Search users..."
+            style={styles.searchInput}
+            placeholderTextColor="#94A3B8"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} style={{ padding: 4 }}>
+              <MaterialIcons name="close" size={18} color="#64748B" />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#0052CC" />
+          <ActivityIndicator size="large" color="#057A55" />
 
         </View>
       ) : (
         <FlatList
-          data={users}
+          data={filteredUsers}
           keyExtractor={(item) => item.id.toString()}
           renderItem={renderUserItem}
           ListEmptyComponent={
             <View style={styles.center}>
-              <Text style={styles.emptyText}>No users found</Text>
+              <Text style={styles.emptyText}>
+                {searchQuery ? `No users matching "${searchQuery}"` : 'No users found'}
+              </Text>
             </View>
           }
         />
       )}
-      
+
       {/* Create Room Modal */}
       <Modal
         visible={isModalVisible}
@@ -408,7 +535,7 @@ const ContactListScreen = () => {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Create New Room</Text>
-            
+
             <TouchableOpacity style={styles.logoPicker} onPress={pickRoomLogo}>
               {newRoomLogo ? (
                 <Image source={{ uri: newRoomLogo.uri }} style={styles.pickedLogo} />
@@ -428,14 +555,14 @@ const ContactListScreen = () => {
             />
 
             <View style={styles.typeContainer}>
-              <TouchableOpacity 
-                style={[styles.typeBtn, newRoomType === 'private' && styles.typeBtnActive]} 
+              <TouchableOpacity
+                style={[styles.typeBtn, newRoomType === 'private' && styles.typeBtnActive]}
                 onPress={() => setNewRoomType('private')}
               >
                 <Text style={[styles.typeBtnText, newRoomType === 'private' && styles.typeBtnTextActive]}>Private</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.typeBtn, newRoomType === 'public' && styles.typeBtnActive]} 
+              <TouchableOpacity
+                style={[styles.typeBtn, newRoomType === 'public' && styles.typeBtnActive]}
                 onPress={() => setNewRoomType('public')}
               >
                 <Text style={[styles.typeBtnText, newRoomType === 'public' && styles.typeBtnTextActive]}>Public</Text>
@@ -443,14 +570,14 @@ const ContactListScreen = () => {
             </View>
 
             <View style={styles.modalButtons}>
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.cancelBtn]} 
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.cancelBtn]}
                 onPress={() => setModalVisible(false)}
               >
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.createBtn]} 
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.createBtn]}
                 onPress={handleCreateRoom}
                 disabled={isCreating}
               >
@@ -497,14 +624,14 @@ const ContactListScreen = () => {
 
             <Text style={styles.fieldLabel}>Role</Text>
             <View style={styles.typeContainer}>
-              <TouchableOpacity 
-                style={[styles.typeBtn, profileRole === 'employee' && styles.typeBtnActive]} 
+              <TouchableOpacity
+                style={[styles.typeBtn, profileRole === 'employee' && styles.typeBtnActive]}
                 onPress={() => setProfileRole('employee')}
               >
                 <Text style={[styles.typeBtnText, profileRole === 'employee' && styles.typeBtnTextActive]}>Employee</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.typeBtn, profileRole === 'admin' && styles.typeBtnActive]} 
+              <TouchableOpacity
+                style={[styles.typeBtn, profileRole === 'admin' && styles.typeBtnActive]}
                 onPress={() => setProfileRole('admin')}
               >
                 <Text style={[styles.typeBtnText, profileRole === 'admin' && styles.typeBtnTextActive]}>Admin</Text>
@@ -512,14 +639,14 @@ const ContactListScreen = () => {
             </View>
 
             <View style={styles.modalButtons}>
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.cancelBtn]} 
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.cancelBtn]}
                 onPress={() => setProfileModalVisible(false)}
               >
                 <Text style={styles.cancelBtnText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalBtn, styles.createBtn]} 
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.createBtn]}
                 onPress={handleUpdateProfile}
                 disabled={isUpdating}
               >
@@ -549,10 +676,10 @@ const ContactListScreen = () => {
                 <MaterialIcons name="close" size={24} color="#666" />
               </TouchableOpacity>
             </View>
-            
+
             {loadingAllUsers ? (
               <View style={styles.center}>
-                <ActivityIndicator size="large" color="#0052CC" />
+                <ActivityIndicator size="large" color="#057A55" />
               </View>
             ) : (
               <FlatList
@@ -573,11 +700,11 @@ const ContactListScreen = () => {
                       <Text style={styles.name}>{item.name || item.user_id || 'Unknown'}</Text>
                       <Text style={styles.time}>Role: {item.role || 'employee'}</Text>
                     </View>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       style={{ padding: 10 }}
                       onPress={() => handleAddUserToRoom(item.id)}
                     >
-                      <MaterialIcons name="person-add" size={24} color="#0052CC" />
+                      <MaterialIcons name="person-add" size={24} color="#057A55" />
                     </TouchableOpacity>
                   </View>
                 )}
@@ -602,68 +729,104 @@ const ContactListScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  header: { 
-    padding: 15, 
-    backgroundColor: '#0052CC', 
-    flexDirection: 'row', 
+  container: { flex: 1, backgroundColor: '#F0F0F0' },
+  header: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#075E54',
+    flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center' 
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
-  headerTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
+  headerTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold', letterSpacing: 0.3 },
   headerIcons: { flexDirection: 'row' },
   iconBtn: { marginLeft: 20 },
-  iconText: { color: '#fff', fontSize: 20 },
-  searchBar: { padding: 10, backgroundColor: '#0052CC' },
-
-  searchInput: { 
-    backgroundColor: 'rgba(255,255,255,0.1)', 
-    borderRadius: 20, 
-    paddingHorizontal: 15, 
-    paddingVertical: 8, 
-    color: '#fff' 
+  backBtn: { marginRight: 12 },
+  searchBar: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: '#075E54' },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    paddingHorizontal: 14,
+    height: 40,
+    elevation: 0,
   },
-  chatItem: { flexDirection: 'row', padding: 15, alignItems: 'center' },
-  avatarPlaceholder: { 
-    width: 55, 
-    height: 55, 
-    borderRadius: 27.5, 
-    backgroundColor: '#007AFF', 
-    justifyContent: 'center', 
-    alignItems: 'center' 
+  searchInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#000',
+    paddingVertical: 0,
+  },
+  chatItem: {
+    flexDirection: 'row',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  avatarPlaceholder: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: '#128C7E',
+    justifyContent: 'center',
+    alignItems: 'center'
   },
   avatarText: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
-  userImage: { width: 55, height: 55, borderRadius: 27.5 },
-  chatInfo: { flex: 1, marginLeft: 15, borderBottomWidth: 0.5, borderBottomColor: '#eee', paddingBottom: 15 },
-  topRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
-  name: { fontSize: 17, fontWeight: 'bold', color: '#000' },
-  time: { fontSize: 12, color: '#666' },
+  userImage: { width: 52, height: 52, borderRadius: 26 },
+  chatInfo: {
+    flex: 1,
+    marginLeft: 14,
+    borderBottomWidth: 0.6,
+    borderBottomColor: '#E8E8E8',
+    paddingBottom: 12,
+  },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+  name: { fontSize: 17, fontWeight: '600', color: '#000', flex: 1, marginRight: 8 },
+  time: { fontSize: 12, color: '#8696A0' },
+  timeUnread: { fontSize: 12, color: '#25D366', fontWeight: '600' },
   bottomRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  lastMessage: { fontSize: 14, color: '#666', flex: 1, marginRight: 10 },
+  lastMessage: { fontSize: 14, color: '#8696A0', flex: 1, marginRight: 8 },
+  unreadBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: '#25D366',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  unreadText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   mobileText: { fontSize: 12, color: '#075E54', fontWeight: '500' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 50 },
   emptyText: { color: '#666', fontSize: 16 },
-  fab: { 
-    position: 'absolute', 
-    right: 20, 
-    bottom: 20, 
-    backgroundColor: '#3B82F6', 
-    width: 60, 
-    height: 60, 
-    borderRadius: 30, 
-    justifyContent: 'center', 
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    backgroundColor: '#25D366',
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    justifyContent: 'center',
     alignItems: 'center',
-    elevation: 5,
+    elevation: 6,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
-    shadowRadius: 3
+    shadowRadius: 4,
   },
   fabText: { fontSize: 24 },
   // Modal Styles
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { backgroundColor: '#fff', borderRadius: 15, padding: 20, width: '85%', alignItems: 'center' },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 20, color: '#0052CC' },
+  modalContent: { backgroundColor: '#fff', borderRadius: 12, padding: 20, width: '85%', alignItems: 'center' },
+  modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 20, color: '#075E54' },
 
   fieldLabel: { alignSelf: 'flex-start', fontSize: 13, fontWeight: '600', color: '#666', marginBottom: 5 },
 
@@ -674,14 +837,14 @@ const styles = StyleSheet.create({
   modalInput: { width: '100%', borderBottomWidth: 1, borderBottomColor: '#ccc', paddingVertical: 10, fontSize: 16, marginBottom: 20, color: '#000' },
   typeContainer: { flexDirection: 'row', marginBottom: 25, backgroundColor: '#f0f0f0', borderRadius: 25, padding: 4 },
   typeBtn: { paddingVertical: 8, paddingHorizontal: 20, borderRadius: 20 },
-  typeBtnActive: { backgroundColor: '#0052CC' },
+  typeBtnActive: { backgroundColor: '#075E54' },
 
   typeBtnText: { color: '#666', fontWeight: 'bold' },
   typeBtnTextActive: { color: '#fff' },
   modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', width: '100%' },
   modalBtn: { paddingVertical: 10, paddingHorizontal: 20, borderRadius: 5, marginLeft: 10 },
   cancelBtn: { backgroundColor: '#eee' },
-  createBtn: { backgroundColor: '#0052CC' },
+  createBtn: { backgroundColor: '#075E54' },
 
   cancelBtnText: { color: '#666', fontWeight: 'bold' },
   createBtnText: { color: '#fff', fontWeight: 'bold' },

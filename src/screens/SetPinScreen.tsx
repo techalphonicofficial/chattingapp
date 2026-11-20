@@ -41,9 +41,9 @@ const styles = StyleSheet.create({
   content: { padding: 30, flex: 1, justifyContent: 'center' },
   title: { fontSize: 24, fontWeight: 'bold', marginBottom: 10, color: '#000' },
   subtitle: { fontSize: 16, color: '#666', marginBottom: 30 },
-  input: { borderBottomWidth: 2, borderBottomColor: '#0052CC', fontSize: 20, paddingVertical: 10, marginBottom: 40, textAlign: 'center', color: '#000' },
+  input: { borderBottomWidth: 2, borderBottomColor: '#057A55', fontSize: 20, paddingVertical: 10, marginBottom: 40, textAlign: 'center', color: '#000' },
 
-  button: { backgroundColor: '#0052CC', padding: 15, borderRadius: 10, alignItems: 'center' },
+  button: { backgroundColor: '#057A55', padding: 15, borderRadius: 10, alignItems: 'center' },
 
   buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
 });

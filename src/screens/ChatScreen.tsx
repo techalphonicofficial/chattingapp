@@ -14,21 +14,32 @@ import {
   ImageBackground,
   Alert,
   Modal,
+  Keyboard,
+  Linking,
+  Animated,
+  PermissionsAndroid,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { io, Socket } from 'socket.io-client';
-import { launchImageLibrary } from 'react-native-image-picker';
+import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
 import { pick } from '@react-native-documents/picker';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import RNPrint from 'react-native-print';
+import {
+  startListening,
+  stopListening,
+  destroy,
+  addSpeechResultsListener,
+  addSpeechErrorListener,
+} from '@reactxnative/react-native-voice';
 const LOG_PREFIX = '[ChatScreen]';
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
-const SOCKET_URL = 'http://187.127.154.235:5000';
+const SOCKET_URL = 'http://192.168.1.5:5000';
 const API_BASE_URL = `${SOCKET_URL}/api`;
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
@@ -50,11 +61,17 @@ const ChatScreen = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [socketStatus, setSocketStatus] = useState('Connecting...');
   const [menuVisible, setMenuVisible] = useState(false);
+  const [attachmentModalVisible, setAttachmentModalVisible] = useState(false);
   const [exportingPDF, setExportingPDF] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
   // Track whether we've done the initial scroll-to-bottom
   const initialScrollDone = useRef(false);
+  const inputTextRef = useRef(inputText);
+  inputTextRef.current = inputText;
+  const sendMessageRef = useRef<(text?: string | null, file?: any) => Promise<void>>(() => Promise.resolve());
 const log = {
   info: (...args: any[]) => console.log(LOG_PREFIX, 'ℹ️', ...args),
   warn: (...args: any[]) => console.warn(LOG_PREFIX, '⚠️', ...args),
@@ -67,6 +84,113 @@ const log = {
       [userId, contactId].sort((a, b) => a - b).join('_'),
     [room?.id, userId, contactId]
   );
+
+  // ─── KEYBOARD LISTENERS ──────────────────────────────────────────────────
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      scrollToBottom(true);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardVisible(false);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // ─── VOICE TO TEXT (SPEECH RECOGNITION) ──────────────────────────────────
+  useEffect(() => {
+    const resultsSub = addSpeechResultsListener((spokenText: string) => {
+      log.info('Speech recognized:', spokenText);
+      setIsListening(false);
+      const text = spokenText ? spokenText.trim() : '';
+      if (text) {
+        const currentInput = inputTextRef.current.trim();
+        const fullMessage = currentInput ? `${currentInput} ${text}` : text;
+        setInputText('');
+        sendMessageRef.current(fullMessage);
+      }
+    });
+
+    const errorSub = addSpeechErrorListener((errCode: number) => {
+      log.warn('Speech error code:', errCode);
+      setIsListening(false);
+      if (errCode === 7) {
+        Alert.alert('Voice Recognition', 'Aapki aawaaz samajh nahi aayi, kripya dobara bolein.');
+      } else if (errCode === 9) {
+        Alert.alert('Permission Denied', 'Microphone permission allow karein.');
+      }
+    });
+
+    return () => {
+      resultsSub?.remove?.();
+      errorSub?.remove?.();
+      try {
+        stopListening();
+        destroy();
+      } catch (e) {
+        // ignore
+      }
+    };
+  }, []);
+
+  const requestAudioPermission = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const hasPermission = await PermissionsAndroid.check(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO
+        );
+        if (hasPermission) return true;
+
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: 'Microphone Permission',
+            message: 'Chattingapp needs microphone access to convert voice to text.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
+      } catch (err) {
+        console.warn('Audio permission error:', err);
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const handleVoicePress = async () => {
+    if (isListening) {
+      try {
+        stopListening();
+      } catch (err) {
+        console.warn('Error stopping voice:', err);
+      }
+      setIsListening(false);
+    } else {
+      const hasPermission = await requestAudioPermission();
+      if (!hasPermission) {
+        Alert.alert('Permission Denied', 'Microphone permission is required for voice typing.');
+        return;
+      }
+      try {
+        setIsListening(true);
+        startListening();
+      } catch (err) {
+        console.error('Error starting voice recognition:', err);
+        setIsListening(false);
+        Alert.alert('Voice Error', 'Could not start voice recognition.');
+      }
+    }
+  };
 
   // ─── SOCKET SETUP ──────────────────────────────────────────────────────────
 
@@ -92,6 +216,12 @@ useEffect(() => {
     timeout: 20000,
     forceNew: false,                // reuse engine if possible
     autoConnect: true,
+    auth: {
+      token: token,
+    },
+    extraHeaders: {
+      Authorization: `Bearer ${token}`,
+    },
   });
 
   socketRef.current = socket;
@@ -161,11 +291,11 @@ useEffect(() => {
     }
   });
 
-  socket.io.on('upgrade_error', (err: any) => {
+  (socket.io as any).on('upgrade_error', (err: any) => {
     log.warn('Transport upgrade error', { message: err?.message, type: err?.type });
   });
 
-  socket.io.on('upgrade', () => {
+  (socket.io as any).on('upgrade', () => {
     log.info('Transport upgraded to:', socket.io.engine.transport.name);
   });
 
@@ -233,7 +363,7 @@ useEffect(() => {
     socketRef.current = null;
     reconnectAttempts.current = 0;
   };
-}, [roomId]);
+}, [roomId, token]);
 
   // ─── SCROLL TO BOTTOM HELPER ───────────────────────────────────────────────
   const scrollToBottom = (animated = true) => {
@@ -460,29 +590,114 @@ useEffect(() => {
     }
   };
 
-  // ─── PICK IMAGE ────────────────────────────────────────────────────────────
-  const pickImage = async () => {
-    const result = await launchImageLibrary({ mediaType: 'photo', quality: 1 });
-    if (result.assets && result.assets.length > 0) {
-      const asset = result.assets[0];
-      await sendMessage(null, {
-        uri: asset.uri,
-        type: asset.type,
-        name: asset.fileName || `image_${Date.now()}.jpg`,
-        message_type: 'image',
-      });
+  // ─── FILE & URL HELPERS ──────────────────────────────────────────────────
+  const getFullUrl = (url: string) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    return `${SOCKET_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+  };
+
+  const getFileName = (url: string) => {
+    if (!url) return 'Attachment';
+    try {
+      const clean = decodeURIComponent(url.split('?')[0]);
+      const parts = clean.split('/');
+      return parts[parts.length - 1] || 'Attachment';
+    } catch {
+      return 'Attachment';
     }
   };
 
-  // ─── PICK DOCUMENT ─────────────────────────────────────────────────────────
+  const getFileTypeInfo = (urlOrName: string) => {
+    const clean = (urlOrName || '').toLowerCase().split('?')[0];
+    const ext = clean.substring(clean.lastIndexOf('.') + 1);
+
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) {
+      return { type: 'image', ext: ext.toUpperCase(), icon: 'image', color: '#10B981' };
+    }
+    if (ext === 'pdf') {
+      return { type: 'pdf', ext: 'PDF', icon: 'file-pdf-box', color: '#EF4444' };
+    }
+    if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) {
+      return { type: 'zip', ext: ext.toUpperCase(), icon: 'folder-zip', color: '#F59E0B' };
+    }
+    if (['doc', 'docx'].includes(ext)) {
+      return { type: 'doc', ext: 'DOC', icon: 'file-word-box', color: '#2563EB' };
+    }
+    if (['xls', 'xlsx', 'csv'].includes(ext)) {
+      return { type: 'sheet', ext: 'XLS', icon: 'file-excel-box', color: '#059669' };
+    }
+    if (['ppt', 'pptx'].includes(ext)) {
+      return { type: 'presentation', ext: 'PPT', icon: 'file-powerpoint-box', color: '#EA580C' };
+    }
+    if (['mp3', 'wav', 'm4a', 'aac', 'ogg'].includes(ext)) {
+      return { type: 'audio', ext: 'AUDIO', icon: 'music-box', color: '#7C3AED' };
+    }
+    if (['mp4', 'mkv', 'avi', 'mov'].includes(ext)) {
+      return { type: 'video', ext: 'VIDEO', icon: 'video-box', color: '#DB2777' };
+    }
+    return { type: 'file', ext: ext ? ext.toUpperCase() : 'FILE', icon: 'file-document-outline', color: '#4B5563' };
+  };
+
+  const openAttachment = async (url: string) => {
+    const fullUrl = getFullUrl(url);
+    if (!fullUrl) return;
+    try {
+      await Linking.openURL(fullUrl);
+    } catch (e) {
+      Alert.alert('Open File', `Could not open file directly.\nURL: ${fullUrl}`);
+    }
+  };
+
+  // ─── PICK IMAGE (GALLERY) ──────────────────────────────────────────────────
+  const pickImage = async () => {
+    setAttachmentModalVisible(false);
+    try {
+      const result = await launchImageLibrary({ mediaType: 'photo', quality: 0.9 });
+      if (result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        await sendMessage(null, {
+          uri: asset.uri,
+          type: asset.type || 'image/jpeg',
+          name: asset.fileName || `image_${Date.now()}.jpg`,
+          message_type: 'image',
+        });
+      }
+    } catch (err) {
+      console.error('Gallery pick error:', err);
+    }
+  };
+
+  // ─── PICK CAMERA ────────────────────────────────────────────────────────────
+  const pickCamera = async () => {
+    setAttachmentModalVisible(false);
+    try {
+      const result = await launchCamera({ mediaType: 'photo', quality: 0.9 });
+      if (result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        await sendMessage(null, {
+          uri: asset.uri,
+          type: asset.type || 'image/jpeg',
+          name: asset.fileName || `camera_${Date.now()}.jpg`,
+          message_type: 'image',
+        });
+      }
+    } catch (err) {
+      console.error('Camera capture error:', err);
+    }
+  };
+
+  // ─── PICK DOCUMENT (PDF, ZIP, DOC, ETC.) ───────────────────────────────────
   const pickDocument = async () => {
+    setAttachmentModalVisible(false);
     try {
       const [res] = await pick({ type: ['*/*'] });
       if (res) {
+        const fileName = res.name || `doc_${Date.now()}`;
         await sendMessage(null, {
           uri: res.uri,
-          type: res.type,
-          name: res.name,
+          type: res.type || 'application/octet-stream',
+          name: fileName,
           message_type: 'document',
         });
       }
@@ -564,12 +779,15 @@ useEffect(() => {
       }
     }
   };
+  sendMessageRef.current = sendMessage;
 
   // ─── RENDER MESSAGE BUBBLE ─────────────────────────────────────────────────
   const renderMessage = ({ item }: any) => {
     const isMe = String(item.sender_id) === String(userId);
     const isRead = item.is_read || item.status === 'read';
     const isSending = item.is_optimistic;
+    const fullFileUrl = item.file_url ? getFullUrl(item.file_url) : null;
+    const fileInfo = fullFileUrl ? getFileTypeInfo(fullFileUrl) : null;
 
     return (
       <View
@@ -578,20 +796,62 @@ useEffect(() => {
           isMe ? styles.myMessage : styles.theirMessage,
         ]}
       >
-        {item.file_url && (
-          <TouchableOpacity activeOpacity={0.8}>
-            <Image
-              source={{ uri: item.file_url }}
-              style={styles.messageImage}
-              resizeMode="cover"
-            />
-          </TouchableOpacity>
+        {fullFileUrl && fileInfo && (
+          fileInfo.type === 'image' ? (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => openAttachment(fullFileUrl)}
+            >
+              <Image
+                source={{ uri: fullFileUrl }}
+                style={styles.messageImage}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              activeOpacity={0.8}
+              style={[
+                styles.documentCard,
+                isMe ? styles.documentCardMe : styles.documentCardThem,
+              ]}
+              onPress={() => openAttachment(fullFileUrl)}
+            >
+              <View style={[styles.docIconCircle, { backgroundColor: fileInfo.color }]}>
+                <MaterialCommunityIcons name={fileInfo.icon} size={26} color="#fff" />
+              </View>
+              <View style={styles.docInfo}>
+                <Text
+                  style={[styles.docName, isMe ? styles.docNameMe : styles.docNameThem]}
+                  numberOfLines={1}
+                  ellipsizeMode="middle"
+                >
+                  {getFileName(fullFileUrl)}
+                </Text>
+                <View style={styles.docMetaRow}>
+                  <Text style={styles.docBadge}>{fileInfo.ext}</Text>
+                  <Text style={[styles.docActionText, isMe && { color: '#047857' }]}>
+                    Tap to open
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.docDownloadBtn}>
+                <MaterialCommunityIcons
+                  name="download"
+                  size={20}
+                  color={isMe ? '#057A55' : '#64748B'}
+                />
+              </View>
+            </TouchableOpacity>
+          )
         )}
         {item.message ? (
-          <Text style={styles.messageText}>{item.message}</Text>
+          <Text style={[styles.messageText, isMe ? styles.myMessageText : styles.theirMessageText]}>
+            {item.message}
+          </Text>
         ) : null}
         <View style={styles.messageFooter}>
-          <Text style={styles.timestamp}>
+          <Text style={[styles.timestamp, isMe && { color: '#047857' }]}>
             {new Date(item.created_at || Date.now()).toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',
@@ -619,8 +879,8 @@ useEffect(() => {
   // ─── RENDER ────────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#0052CC" />
-      <View style={{ height: insets.top, backgroundColor: '#0052CC' }} />
+      <StatusBar barStyle="light-content" backgroundColor="#075E54" translucent={false} />
+      <View style={{ height: Platform.OS === 'ios' ? insets.top : 0, backgroundColor: '#075E54' }} />
 
       {/* ── Header ── */}
       <View style={styles.header}>
@@ -628,25 +888,28 @@ useEffect(() => {
           <MaterialIcons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
 
-        {contact.profile_image ? (
-          <Image
-            source={{ uri: contact.profile_image }}
-            style={styles.headerAvatar}
-          />
-        ) : (
-          <View style={[styles.headerAvatar, styles.avatarPlaceholder]}>
-            <Text style={styles.avatarText}>
-              {(contact.name || contact.user_id || 'U').charAt(0).toUpperCase()}
-            </Text>
-          </View>
-        )}
+        <View style={styles.avatarWrap}>
+          {contact.profile_image ? (
+            <Image
+              source={{ uri: contact.profile_image }}
+              style={styles.headerAvatar}
+            />
+          ) : (
+            <View style={[styles.headerAvatar, styles.avatarPlaceholder]}>
+              <Text style={styles.avatarText}>
+                {(contact.name || contact.user_id || 'U').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+          {isConnected && <View style={styles.onlineDot} />}
+        </View>
 
         <View style={styles.headerInfo}>
-          <Text style={styles.headerName}>
+          <Text style={styles.headerName} numberOfLines={1}>
             {contact.name || contact.user_id || 'Unknown'}
           </Text>
-          <Text style={[styles.headerStatus, isConnected && { color: '#87CEFA' }]}>
-            {socketStatus}
+          <Text style={[styles.headerStatus, isConnected && { color: '#A7F3D0' }]}>
+            {isConnected ? 'Online' : socketStatus}
           </Text>
         </View>
 
@@ -655,7 +918,7 @@ useEffect(() => {
             style={styles.hIcon}
             onPress={() => setMenuVisible(true)}
           >
-            <MaterialIcons name="more-vert" size={22} color="#fff" />
+            <MaterialIcons name="more-vert" size={24} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
@@ -672,7 +935,7 @@ useEffect(() => {
           onPress={() => setMenuVisible(false)}
           activeOpacity={1}
         >
-          <View style={styles.menuContainer}>
+          <View style={[styles.menuContainer, { top: insets.top + 50 }]}>
             <TouchableOpacity
               style={styles.menuItem}
               onPress={exportChatAsPDF}
@@ -680,75 +943,75 @@ useEffect(() => {
             >
               {exportingPDF ? (
                 <View style={styles.menuLoadingRow}>
-                  <ActivityIndicator size="small" color="#0052CC" />
+                  <ActivityIndicator size="small" color="#057A55" />
                   <Text
-                    style={[styles.menuItemText, { marginLeft: 8, color: '#0052CC' }]}
+                    style={[styles.menuItemText, { marginLeft: 8, color: '#057A55' }]}
                   >
                     Exporting...
                   </Text>
                 </View>
               ) : (
-                <Text style={styles.menuItemText}>📄 Export Chat as PDF</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <MaterialIcons name="picture-as-pdf" size={20} color="#057A55" style={{ marginRight: 10 }} />
+                  <Text style={styles.menuItemText}>Export Chat as PDF</Text>
+                </View>
               )}
             </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
 
-      {/* ── Chat Background + Messages ── */}
+      {/* ── Chat Messages Body ── */}
       <ImageBackground
-        source={{
-          uri: 'https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png',
-        }}
+        source={require('./techalphonic_logo.png')}
         style={styles.chatBackground}
+        imageStyle={{ opacity: 0.03, resizeMode: 'center' }}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{ flex: 1 }}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 60}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
         >
           {loading ? (
-            <ActivityIndicator
-              size="large"
-              color="#075E54"
-              style={{ flex: 1 }}
-            />
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color="#057A55" />
+            </View>
           ) : (
             <FlatList
               ref={flatListRef}
               data={messages}
+              keyExtractor={(item, idx) => item.id?.toString() || idx.toString()}
               renderItem={renderMessage}
-              keyExtractor={(item, index) =>
-                item.id?.toString() || `msg-${index}`
-              }
-              // ── NOT inverted — normal top-to-bottom order ──
-              // Oldest messages at top, newest at bottom (WhatsApp style)
-              contentContainerStyle={{ padding: 10, paddingBottom: 10 }}
-              initialNumToRender={20}
-              maxToRenderPerBatch={10}
-              windowSize={5}
-              removeClippedSubviews={Platform.OS === 'android'}
+              style={{ flex: 1 }}
+              keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
-              // Scroll to bottom once after initial load
-              onContentSizeChange={() => {
-                if (!initialScrollDone.current && messages.length > 0) {
-                  flatListRef.current?.scrollToEnd({ animated: false });
+              contentContainerStyle={{
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+              }}
+              onLayout={() => {
+                if (!initialScrollDone.current) {
+                  scrollToBottom(false);
                   initialScrollDone.current = true;
                 }
               }}
-              // Load older messages when user scrolls to the very top
+              onContentSizeChange={() => {
+                if (!initialScrollDone.current) {
+                  scrollToBottom(false);
+                  initialScrollDone.current = true;
+                }
+              }}
               onScroll={({ nativeEvent }) => {
-                if (nativeEvent.contentOffset.y <= 0 && hasMore && !loadingMore) {
+                if (nativeEvent.contentOffset.y <= 10 && hasMore && !loadingMore) {
                   loadMoreMessages();
                 }
               }}
               scrollEventThrottle={200}
-              // Show spinner at the top while loading older messages
               ListHeaderComponent={() =>
                 loadingMore ? (
                   <ActivityIndicator
                     size="small"
-                    color="#0052CC"
+                    color="#057A55"
                     style={{ marginVertical: 10 }}
                   />
                 ) : hasMore ? (
@@ -765,56 +1028,138 @@ useEffect(() => {
           )}
 
           {/* ── Input Area ── */}
-          <View style={[styles.inputArea, { marginBottom: insets.bottom + 10 }]}>
+          <View
+            style={[
+              styles.inputArea,
+              { marginBottom: keyboardVisible ? 4 : (insets.bottom > 0 ? insets.bottom + 4 : 8) },
+            ]}
+          >
             <View style={styles.inputContainer}>
               <TouchableOpacity style={styles.emojiBtn}>
                 <MaterialCommunityIcons
                   name="emoticon-outline"
                   size={24}
-                  color="#666"
+                  color="#64748B"
                 />
               </TouchableOpacity>
 
               <TextInput
                 style={styles.input}
-                placeholder="Type a message..."
-                placeholderTextColor="#999"
+                placeholder={isListening ? 'Listening... Speak now' : 'Type a message...'}
+                placeholderTextColor={isListening ? '#E53E3E' : '#94A3B8'}
                 value={inputText}
                 onChangeText={setInputText}
+                onFocus={() => scrollToBottom(true)}
                 multiline
               />
 
               <TouchableOpacity
                 style={styles.attachBtn}
                 onPress={() => {
-                  Alert.alert('Attach File', 'Choose attachment type', [
-                    { text: 'Image', onPress: pickImage },
-                    { text: 'Document', onPress: pickDocument },
-                    { text: 'Cancel', style: 'cancel' },
-                  ]);
+                  Keyboard.dismiss();
+                  setAttachmentModalVisible(true);
                 }}
               >
                 <MaterialCommunityIcons
                   name="paperclip"
-                  size={24}
-                  color="#666"
+                  size={22}
+                  color="#64748B"
                   style={styles.attachIcon}
                 />
               </TouchableOpacity>
             </View>
 
             <TouchableOpacity
-              style={styles.sendBtn}
-              onPress={() => sendMessage()}
+              style={[
+                styles.sendBtn,
+                isListening && styles.sendBtnListening,
+              ]}
+              onPress={() => {
+                if (isListening) {
+                  handleVoicePress();
+                } else if (inputText.trim()) {
+                  sendMessage();
+                } else {
+                  handleVoicePress();
+                }
+              }}
+              activeOpacity={0.8}
             >
-              {inputText.trim() ? (
-                <MaterialIcons name="send" size={24} color="#fff" />
-              ) : (
+              {isListening ? (
                 <MaterialIcons name="mic" size={24} color="#fff" />
+              ) : inputText.trim() ? (
+                <MaterialIcons name="send" size={22} color="#fff" />
+              ) : (
+                <MaterialIcons name="mic" size={22} color="#fff" />
               )}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+
+        {/* ── WhatsApp-Style Attachment Bottom Sheet ── */}
+        <Modal
+          visible={attachmentModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setAttachmentModalVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.attachmentOverlay}
+            activeOpacity={1}
+            onPress={() => setAttachmentModalVisible(false)}
+          >
+            <View
+              style={[
+                styles.attachmentPanel,
+                { paddingBottom: insets.bottom > 0 ? insets.bottom + 16 : 24 },
+              ]}
+            >
+              <View style={styles.attachmentHandle} />
+              <Text style={styles.attachmentTitle}>Share Content</Text>
+
+              <View style={styles.attachmentGrid}>
+                {/* Document (PDF, ZIP, DOC, etc.) */}
+                <TouchableOpacity
+                  style={styles.attachmentItem}
+                  onPress={pickDocument}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.attachmentCircle, { backgroundColor: '#5F66CD' }]}>
+                    <MaterialCommunityIcons name="file-document" size={28} color="#fff" />
+                  </View>
+                  <Text style={styles.attachmentLabel}>Document</Text>
+                  <Text style={styles.attachmentSubLabel}>PDF, ZIP, Docs</Text>
+                </TouchableOpacity>
+
+                {/* Camera */}
+                <TouchableOpacity
+                  style={styles.attachmentItem}
+                  onPress={pickCamera}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.attachmentCircle, { backgroundColor: '#D3396D' }]}>
+                    <MaterialCommunityIcons name="camera" size={28} color="#fff" />
+                  </View>
+                  <Text style={styles.attachmentLabel}>Camera</Text>
+                  <Text style={styles.attachmentSubLabel}>Take photo</Text>
+                </TouchableOpacity>
+
+                {/* Gallery */}
+                <TouchableOpacity
+                  style={styles.attachmentItem}
+                  onPress={pickImage}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.attachmentCircle, { backgroundColor: '#AC44CF' }]}>
+                    <MaterialCommunityIcons name="image" size={28} color="#fff" />
+                  </View>
+                  <Text style={styles.attachmentLabel}>Gallery</Text>
+                  <Text style={styles.attachmentSubLabel}>Photos</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </TouchableOpacity>
+        </Modal>
       </ImageBackground>
     </View>
   );
@@ -822,122 +1167,302 @@ useEffect(() => {
 
 // ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0052CC' },
+  container: { flex: 1, backgroundColor: '#075E54' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 10,
-    backgroundColor: '#0052CC',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    backgroundColor: '#075E54',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
   },
-  backBtn: { paddingRight: 5 },
+  backBtn: { paddingRight: 6, paddingVertical: 4 },
+  avatarWrap: { position: 'relative' },
   headerAvatar: { width: 38, height: 38, borderRadius: 19 },
+  onlineDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 11,
+    height: 11,
+    borderRadius: 5.5,
+    backgroundColor: '#25D366',
+    borderWidth: 2,
+    borderColor: '#075E54',
+  },
   headerInfo: { flex: 1, marginLeft: 10 },
-  headerName: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  headerStatus: { color: 'rgba(255,255,255,0.7)', fontSize: 12 },
+  headerName: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  headerStatus: { color: 'rgba(255, 255, 255, 0.8)', fontSize: 12 },
   headerIcons: { flexDirection: 'row' },
-  hIcon: { marginLeft: 15 },
-  chatBackground: { flex: 1, backgroundColor: '#E5DDD5' },
+  hIcon: { paddingLeft: 12 },
+  // WhatsApp classic beige/grey wallpaper
+  chatBackground: { flex: 1, backgroundColor: '#ECE5DD' },
   messageBubble: {
     maxWidth: '80%',
-    padding: 8,
-    borderRadius: 12,
-    marginBottom: 5,
+    paddingTop: 6,
+    paddingBottom: 4,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 2,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
   },
   messageImage: {
-    width: 200,
+    width: 220,
     height: 200,
-    borderRadius: 10,
-    marginBottom: 5,
+    borderRadius: 6,
+    marginBottom: 4,
   },
+  // WhatsApp green bubble for sender
   myMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#E1F0FF',
+    backgroundColor: '#DCF8C6',
     borderTopRightRadius: 0,
   },
+  // White bubble for receiver
   theirMessage: {
     alignSelf: 'flex-start',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 0,
   },
   messageText: { fontSize: 15, color: '#000' },
+  myMessageText: { color: '#000' },
+  theirMessageText: { color: '#000' },
   messageFooter: {
     flexDirection: 'row',
     alignSelf: 'flex-end',
     alignItems: 'center',
-    marginTop: 2,
+    marginTop: 1,
   },
-  timestamp: { fontSize: 10, color: '#999' },
-  ticks: { fontSize: 14, marginLeft: 3, letterSpacing: -4 },
-  readTicks: { color: '#007AFF' },
-  sentTicks: { color: '#999' },
+  timestamp: { fontSize: 11, color: '#8696A0' },
+  ticks: { fontSize: 14, marginLeft: 2, letterSpacing: -4 },
+  readTicks: { color: '#53BDEB' },
+  sentTicks: { color: '#8696A0' },
   sendingTicks: { color: '#ccc', fontSize: 11, letterSpacing: 0 },
+  // Input row at bottom
   inputArea: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 6,
+    backgroundColor: '#ECE5DD',
   },
   inputContainer: {
     flex: 1,
     flexDirection: 'row',
     backgroundColor: '#fff',
-    borderRadius: 25,
+    borderRadius: 24,
     alignItems: 'center',
-    paddingHorizontal: 10,
-    elevation: 2,
-    marginRight: 5,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    elevation: 1,
+    marginRight: 6,
   },
-  emojiBtn: { padding: 5 },
+  emojiBtn: { padding: 2, marginRight: 4 },
   input: {
     flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 10,
     fontSize: 16,
     color: '#000',
-    maxHeight: 100,
+    maxHeight: 120,
   },
-  attachBtn: { padding: 5 },
+  attachBtn: { padding: 4, marginLeft: 4 },
   attachIcon: { transform: [{ rotate: '-45deg' }] },
+  // WhatsApp green mic/send button
   sendBtn: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#0052CC',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#25D366',
     justifyContent: 'center',
     alignItems: 'center',
     elevation: 2,
   },
+  sendBtnListening: {
+    backgroundColor: '#E53935',
+  },
   avatarPlaceholder: {
-    backgroundColor: '#007AFF',
+    backgroundColor: '#128C7E',
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
   loadMoreBtn: {
-    padding: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(255,255,255,0.85)',
+    borderRadius: 20,
+    marginVertical: 8,
+    elevation: 1,
   },
   loadMoreText: {
-    color: '#0052CC',
-    fontSize: 14,
+    color: '#075E54',
+    fontSize: 13,
     fontWeight: '600',
   },
   menuOverlay: { flex: 1, backgroundColor: 'transparent' },
   menuContainer: {
     position: 'absolute',
     top: 50,
-    right: 10,
+    right: 6,
     backgroundColor: '#fff',
-    borderRadius: 8,
-    elevation: 8,
+    borderRadius: 6,
+    elevation: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowRadius: 6,
     minWidth: 200,
   },
-  menuItem: { padding: 15, paddingHorizontal: 20 },
+  menuItem: { padding: 14, paddingHorizontal: 18 },
   menuLoadingRow: { flexDirection: 'row', alignItems: 'center' },
   menuItemText: { fontSize: 15, color: '#000' },
+
+  // ── Document Card Styles ──
+  documentCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 12,
+    marginBottom: 6,
+    width: 240,
+    maxWidth: '100%',
+  },
+  documentCardMe: {
+    backgroundColor: 'rgba(5, 122, 85, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(5, 122, 85, 0.2)',
+  },
+  documentCardThem: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  docIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  docInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  docName: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  docNameMe: {
+    color: '#064E3A',
+  },
+  docNameThem: {
+    color: '#0F172A',
+  },
+  docMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  docBadge: {
+    fontSize: 10,
+    fontWeight: '700',
+    backgroundColor: 'rgba(0,0,0,0.06)',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+    color: '#475569',
+    marginRight: 6,
+  },
+  docActionText: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  docDownloadBtn: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.04)',
+    marginLeft: 4,
+  },
+
+  // ── Attachment Sheet Styles ──
+  attachmentOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  attachmentPanel: {
+    backgroundColor: '#F7F7F7',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 10,
+    paddingHorizontal: 24,
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+  },
+  attachmentHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#C2C2C2',
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  attachmentTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#4A4A4A',
+    marginBottom: 20,
+    textAlign: 'center',
+    letterSpacing: 0.3,
+  },
+  attachmentGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingBottom: 10,
+  },
+  attachmentItem: {
+    alignItems: 'center',
+    width: 80,
+  },
+  attachmentCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    marginBottom: 8,
+  },
+  attachmentLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#4A4A4A',
+  },
+  attachmentSubLabel: {
+    fontSize: 10,
+    color: '#8696A0',
+    marginTop: 2,
+  },
 });
 
 export default ChatScreen;

@@ -220,20 +220,20 @@ const OrderDetailScreen = () => {
 
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0052CC" />
-      <View style={{ height: insets.top, backgroundColor: '#0052CC' }} />
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <View style={{ height: insets.top, backgroundColor: '#044E3A' }} />
 
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>Order Details</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>Order Summary</Text>
         <View style={{ width: 32 }} />
       </View>
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#0052CC" />
+          <ActivityIndicator size="large" color="#057A55" />
         </View>
       ) : order ? (
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -250,10 +250,10 @@ const OrderDetailScreen = () => {
             <Text style={styles.grandTotal}>{formatINR(order.total_amount)}</Text>
           </View>
 
-          <Text style={styles.sectionTitle}>Items</Text>
+          <Text style={styles.sectionTitle}>Items Ordered</Text>
           {(order.items || []).map(renderOrderItem)}
 
-          <Text style={styles.sectionTitle}>Payment</Text>
+          <Text style={styles.sectionTitle}>Payment Details</Text>
           <View style={styles.infoCard}>
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>Method</Text>
@@ -301,58 +301,69 @@ const OrderDetailScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F7FA' },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#0052CC',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#044E3A',
   },
   backBtn: { padding: 4, marginRight: 8 },
-  headerTitle: { color: '#fff', fontSize: 20, fontWeight: '700', flex: 1 },
+  headerTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center' },
   scroll: { padding: 16, paddingBottom: 32 },
   summaryCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 20,
-    alignItems: 'center',
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E8EDF3',
-  },
-  orderNumber: { fontSize: 16, fontWeight: '700', color: '#111' },
-  orderDate: { fontSize: 13, color: '#666', marginTop: 4 },
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    backgroundColor: '#FFFFFF',
     borderRadius: 20,
+    padding: 24,
+    alignItems: 'center',
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+  },
+  orderNumber: { fontSize: 17, fontWeight: '700', color: '#0F172A' },
+  orderDate: { fontSize: 13, color: '#64748B', marginTop: 4, fontWeight: '500' },
+  statusBadge: {
+    paddingHorizontal: 14,
+    paddingVertical: 5,
+    borderRadius: 14,
     marginTop: 12,
   },
   statusText: { fontSize: 11, fontWeight: '700' },
-  grandTotal: { fontSize: 28, fontWeight: '800', color: '#0052CC', marginTop: 14 },
+  grandTotal: { fontSize: 30, fontWeight: '800', color: '#057A55', marginTop: 14 },
   sectionTitle: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
-    color: '#0052CC',
+    color: '#057A55',
     marginTop: 20,
     marginBottom: 10,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   itemCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E8EDF3',
+    borderColor: '#E2E8F0',
     overflow: 'hidden',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
   },
   galleryWrap: { marginBottom: 12 },
   galleryMain: {
     height: GALLERY_HEIGHT,
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -362,7 +373,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#F8FAFC',
-    borderRadius: 10,
+    borderRadius: 12,
   },
   galleryImage: { width: '100%', height: GALLERY_HEIGHT },
   dotsRow: {
@@ -380,7 +391,7 @@ const styles = StyleSheet.create({
   },
   dotActive: {
     width: 18,
-    backgroundColor: '#0052CC',
+    backgroundColor: '#057A55',
   },
   thumbRow: {
     paddingTop: 10,
@@ -390,57 +401,62 @@ const styles = StyleSheet.create({
   thumbWrap: {
     width: THUMB_SIZE,
     height: THUMB_SIZE,
-    borderRadius: 8,
+    borderRadius: 10,
     borderWidth: 2,
     borderColor: 'transparent',
     overflow: 'hidden',
     marginRight: 8,
   },
   thumbWrapActive: {
-    borderColor: '#0052CC',
+    borderColor: '#057A55',
   },
   thumbImage: {
     width: '100%',
     height: '100%',
   },
   itemInfo: { flex: 1 },
-  itemName: { fontSize: 15, fontWeight: '700', color: '#111' },
-  itemSku: { fontSize: 11, color: '#888', marginTop: 2 },
-  itemQty: { fontSize: 13, color: '#555', marginTop: 6 },
+  itemName: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  itemSku: { fontSize: 12, color: '#64748B', marginTop: 2 },
+  itemQty: { fontSize: 13, color: '#475569', marginTop: 6, fontWeight: '500' },
   itemFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: 10,
   },
-  itemStatusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-  itemStatusText: { fontSize: 10, fontWeight: '700', textTransform: 'capitalize' },
-  itemTotal: { fontSize: 15, fontWeight: '800', color: '#0052CC' },
+  itemStatusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  itemStatusText: { fontSize: 11, fontWeight: '700', textTransform: 'capitalize' },
+  itemTotal: { fontSize: 16, fontWeight: '800', color: '#057A55' },
   infoCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
     borderWidth: 1,
-    borderColor: '#E8EDF3',
+    borderColor: '#E2E8F0',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
   },
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: '#F1F5F9',
   },
-  infoRowLast: { borderBottomWidth: 0, paddingTop: 12 },
-  infoLabel: { fontSize: 14, color: '#666' },
-  infoValue: { fontSize: 14, color: '#111', fontWeight: '600', textTransform: 'capitalize' },
-  infoLabelBold: { fontSize: 15, fontWeight: '700', color: '#111' },
-  infoValueBold: { fontSize: 16, fontWeight: '800', color: '#0052CC' },
-  addressName: { fontSize: 16, fontWeight: '700', color: '#111' },
-  addressLine: { fontSize: 14, color: '#444', marginTop: 6, lineHeight: 20 },
-  addressPhone: { fontSize: 14, color: '#0052CC', marginTop: 10, fontWeight: '600' },
+  infoRowLast: { borderBottomWidth: 0, paddingTop: 14 },
+  infoLabel: { fontSize: 14, color: '#64748B' },
+  infoValue: { fontSize: 14, color: '#0F172A', fontWeight: '600', textTransform: 'capitalize' },
+  infoLabelBold: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  infoValueBold: { fontSize: 17, fontWeight: '800', color: '#057A55' },
+  addressName: { fontSize: 16, fontWeight: '700', color: '#0F172A' },
+  addressLine: { fontSize: 14, color: '#475569', marginTop: 4, lineHeight: 20 },
+  addressPhone: { fontSize: 14, color: '#057A55', marginTop: 8, fontWeight: '600' },
   addressType: {
     fontSize: 12,
-    color: '#666',
+    color: '#64748B',
     marginTop: 8,
     textTransform: 'capitalize',
     fontStyle: 'italic',

@@ -69,11 +69,11 @@ const OrderListScreen = () => {
             orderNumber: item.order_number,
           })
         }
-        activeOpacity={0.7}
+        activeOpacity={0.8}
       >
         <View style={styles.orderTop}>
           <View style={styles.orderIcon}>
-            <MaterialIcons name="receipt-long" size={22} color="#0052CC" />
+            <MaterialIcons name="receipt-long" size={22} color="#057A55" />
           </View>
           <View style={styles.orderInfo}>
             <Text style={styles.orderNumber}>{item.order_number}</Text>
@@ -90,7 +90,10 @@ const OrderListScreen = () => {
           <Text style={styles.itemCount}>
             {itemCount > 0 ? `${itemCount} item${itemCount > 1 ? 's' : ''}` : 'View details'}
           </Text>
-          <Text style={styles.totalAmount}>{formatINR(item.total_amount)}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Text style={styles.totalAmount}>{formatINR(item.total_amount)}</Text>
+            <MaterialIcons name="chevron-right" size={20} color="#94A3B8" style={{ marginLeft: 4 }} />
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -98,8 +101,8 @@ const OrderListScreen = () => {
 
   return (
     <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0052CC" />
-      <View style={{ height: insets.top, backgroundColor: '#0052CC' }} />
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <View style={{ height: insets.top, backgroundColor: '#044E3A' }} />
 
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
@@ -107,13 +110,13 @@ const OrderListScreen = () => {
         </TouchableOpacity>
         <Text style={styles.headerTitle}>My Orders</Text>
         <TouchableOpacity onPress={() => loadOrders(true)} style={styles.refreshBtn}>
-          <MaterialIcons name="refresh" size={24} color="#fff" />
+          <MaterialIcons name="refresh" size={22} color="#fff" />
         </TouchableOpacity>
       </View>
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#0052CC" />
+          <ActivityIndicator size="large" color="#057A55" />
         </View>
       ) : (
         <FlatList
@@ -122,13 +125,13 @@ const OrderListScreen = () => {
           renderItem={renderOrderItem}
           contentContainerStyle={orders.length === 0 ? styles.emptyList : styles.list}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => loadOrders(true)} colors={['#0052CC']} />
+            <RefreshControl refreshing={refreshing} onRefresh={() => loadOrders(true)} colors={['#057A55']} />
           }
           ListEmptyComponent={
             <View style={styles.center}>
-              <MaterialIcons name="shopping-bag" size={64} color="#ccc" />
-              <Text style={styles.emptyTitle}>No orders yet</Text>
-              <Text style={styles.emptyText}>Your placed orders will appear here.</Text>
+              <MaterialIcons name="shopping-bag" size={64} color="#CBD5E1" />
+              <Text style={styles.emptyTitle}>No orders placed</Text>
+              <Text style={styles.emptyText}>When you place orders, their status and details will be tracked here.</Text>
             </View>
           }
         />
@@ -138,51 +141,52 @@ const OrderListScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F7FA' },
+  container: { flex: 1, backgroundColor: '#F8FAFC' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: '#0052CC',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#044E3A',
   },
   backBtn: { padding: 4 },
   refreshBtn: { padding: 4 },
-  headerTitle: { color: '#fff', fontSize: 20, fontWeight: '700', flex: 1, textAlign: 'center' },
+  headerTitle: { color: '#FFFFFF', fontSize: 18, fontWeight: '700', flex: 1, textAlign: 'center', marginHorizontal: 12 },
   list: { padding: 16, paddingBottom: 24 },
   emptyList: { flexGrow: 1 },
   orderCard: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
     padding: 16,
-    marginBottom: 12,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#E8EDF3',
-    elevation: 2,
+    borderColor: '#E2E8F0',
+    elevation: 3,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
   },
   orderTop: { flexDirection: 'row', alignItems: 'center' },
   orderIcon: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: '#E8F1FF',
+    borderRadius: 14,
+    backgroundColor: '#ECFDF5',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
   orderInfo: { flex: 1 },
-  orderNumber: { fontSize: 15, fontWeight: '700', color: '#111' },
-  orderDate: { fontSize: 12, color: '#666', marginTop: 3 },
+  orderNumber: { fontSize: 15, fontWeight: '700', color: '#0F172A' },
+  orderDate: { fontSize: 12, color: '#64748B', marginTop: 2, fontWeight: '500' },
   statusBadge: {
     paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
-  statusText: { fontSize: 10, fontWeight: '700' },
+  statusText: { fontSize: 11, fontWeight: '700' },
   orderBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -190,13 +194,13 @@ const styles = StyleSheet.create({
     marginTop: 14,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
+    borderTopColor: '#F1F5F9',
   },
-  itemCount: { fontSize: 13, color: '#666' },
-  totalAmount: { fontSize: 16, fontWeight: '800', color: '#0052CC' },
+  itemCount: { fontSize: 13, color: '#64748B', fontWeight: '500' },
+  totalAmount: { fontSize: 17, fontWeight: '800', color: '#057A55' },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#333', marginTop: 16 },
-  emptyText: { fontSize: 14, color: '#888', marginTop: 8, textAlign: 'center' },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: '#1E293B', marginTop: 16 },
+  emptyText: { fontSize: 14, color: '#64748B', marginTop: 6, textAlign: 'center', lineHeight: 20 },
 });
 
 export default OrderListScreen;

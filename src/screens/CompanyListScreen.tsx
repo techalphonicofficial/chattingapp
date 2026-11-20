@@ -5,6 +5,8 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { launchImageLibrary } from 'react-native-image-picker';
+import LinearGradient from 'react-native-linear-gradient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
 type CompanyListRouteProp = RouteProp<RootStackParamList, 'CompanyListScreen'>;
@@ -18,6 +20,8 @@ const CompanyListScreen = () => {
 
   const [rooms, setRooms] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSearchActive, setIsSearchActive] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [roomName, setRoomName] = useState('');
   const [roomType, setRoomType] = useState<'private' | 'public'>('private');
@@ -199,10 +203,21 @@ const CompanyListScreen = () => {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      if (AsyncStorage.removeMany) {
+        await AsyncStorage.removeMany(['userToken', 'userRole', 'userId']);
+      } else {
+        await AsyncStorage.removeItem('userToken');
+        await AsyncStorage.removeItem('userRole');
+        await AsyncStorage.removeItem('userId');
+      }
+    } catch (e) {
+      console.error('Logout error:', e);
+    }
     navigation.reset({
       index: 0,
-      routes: [{ name: 'Login' }],
+      routes: [{ name: 'Login' as any }],
     });
   };
 
@@ -216,11 +231,11 @@ const CompanyListScreen = () => {
         name: editUserName,
         user_id: editUserCustomId,
         mobile_number: editUserMobile,
-        // If it's a remote URL, send it. If it's a new local image, we might need a different approach,
-        // but for now, matching the curl's JSON structure is priority.
         profile_image: (editUserProfileImage && editUserProfileImage.uri && editUserProfileImage.uri.startsWith('http')) 
           ? editUserProfileImage.uri 
-          : "",
+          : (editUserProfileImage && editUserProfileImage.base64)
+            ? `data:${editUserProfileImage.type || 'image/jpeg'};base64,${editUserProfileImage.base64}`
+            : "",
         passkey: editUserPasskey || "", // Server might require this
         role: editUserRole,
         can_view_previous_messages: canViewPrevMessages,
@@ -251,7 +266,7 @@ const CompanyListScreen = () => {
       }
 
       if (data.status || response.ok) {
-        Alert.alert('Success', 'User updated successfully!');
+        Alert.alert('Success', data.message || 'User updated successfully!');
         setPermissionModalVisible(false);
         setEditUserName('');
         setEditUserMobile('');
@@ -269,10 +284,60 @@ const CompanyListScreen = () => {
     }
   };
 
+  const handleDeleteUser = async (userIdToDelete: number) => {
+    Alert.alert(
+      'Delete User',
+      'Are you sure you want to delete this user? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setUpdating(true);
+              const response = await fetch(`https://yber.in/api/auth/users/${userIdToDelete}`, {
+                method: 'DELETE',
+                headers: {
+                  'accept': '*/*',
+                  'Authorization': `Bearer ${token}`,
+                },
+              });
+
+              const responseText = await response.text();
+              console.log('Delete Response:', responseText);
+
+              let data: any = {};
+              try {
+                data = JSON.parse(responseText);
+              } catch (e) {
+                Alert.alert('Server Error', 'The server returned an invalid response.');
+                return;
+              }
+
+              if (data.status || response.ok) {
+                Alert.alert('Success', data.message || 'User deleted successfully!');
+                fetchAllUsers();
+              } else {
+                Alert.alert('Error', data.message || 'Failed to delete user');
+              }
+            } catch (error: any) {
+              console.error('Delete Error:', error);
+              Alert.alert('Network Error', error.message || 'Could not connect to the server');
+            } finally {
+              setUpdating(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const pickEditProfileImage = async () => {
     const result = await launchImageLibrary({
       mediaType: 'photo',
       quality: 1,
+      includeBase64: true,
     });
     if (result.assets && result.assets.length > 0) {
       setEditUserProfileImage(result.assets[0]);
@@ -292,52 +357,109 @@ const CompanyListScreen = () => {
   };
 
   const renderRoomItem = ({ item }: { item: any }) => (
-    <TouchableOpacity style={styles.companyItem} onPress={() => handleCompanySelect(item)}>
-      <View style={styles.logoPlaceholder}>
+    <TouchableOpacity
+      style={styles.companyCard}
+      onPress={() => handleCompanySelect(item)}
+      activeOpacity={0.82}
+    >
+      <LinearGradient
+        colors={['#057A55', '#10B981']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={styles.logoGradient}
+      >
         <Text style={styles.logoText}>
           {item.room_name?.charAt(0).toUpperCase() || 'R'}
         </Text>
-      </View>
+      </LinearGradient>
       <View style={styles.info}>
-        <View style={styles.listRow}>
-          <Text style={styles.name}>{item.room_name}</Text>
+        <Text style={styles.name} numberOfLines={1}>{item.room_name}</Text>
+        <Text style={styles.subtext}>Tap to join conversation</Text>
+      </View>
+      <View style={styles.cardRight}>
+        {item.created_at && (
           <Text style={styles.time}>
-            {item.created_at ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+            {new Date(item.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
           </Text>
-        </View>
-        <View style={styles.listRow}>
-          {/* <Text style={styles.msg} numberOfLines={1}>
-            {item.room_type === 'private' ? '🔒 Private Room' : '💬 Public Room'}
-          </Text> */}
+        )}
+        <View style={styles.chevronCircle}>
+          <MaterialIcons name="chevron-right" size={18} color="#057A55" />
         </View>
       </View>
     </TouchableOpacity>
   );
 
+  const filteredRooms = rooms.filter(room =>
+    room.room_name?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <>
     <View style={[styles.container, { paddingBottom: insets.bottom }]}>
-      <StatusBar barStyle="light-content" backgroundColor="#0052CC" />
-      <View style={{ height: insets.top, backgroundColor: '#0052CC' }} />
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Company</Text>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('OrderList', { token })}
-            style={styles.headerIconBtn}
-          >
-            <MaterialIcons name="shopping-bag" size={24} color="#fff" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleLogout} style={styles.headerIconBtn}>
-            <MaterialIcons name="logout" size={24} color="#fff" />
-          </TouchableOpacity>
-          {role === 'admin' && (
-            <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.headerIconBtn}>
-              <MaterialIcons name="more-vert" size={26} color="#fff" />
-            </TouchableOpacity>
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      <LinearGradient
+        colors={['#044E3A', '#057A55', '#0E9F6E']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={{ paddingTop: insets.top }}
+      >
+        <View style={styles.header}>
+          {isSearchActive ? (
+            <View style={styles.searchHeaderContainer}>
+              <TouchableOpacity
+                onPress={() => {
+                  setIsSearchActive(false);
+                  setSearchQuery('');
+                }}
+                style={styles.searchBackBtn}
+              >
+                <MaterialIcons name="arrow-back" size={24} color="#fff" />
+              </TouchableOpacity>
+              <TextInput
+                style={styles.searchBarInput}
+                placeholder="Search companies..."
+                placeholderTextColor="rgba(255, 255, 255, 0.6)"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setSearchQuery('')}
+                  style={styles.searchClearBtn}
+                >
+                  <MaterialIcons name="close" size={22} color="#fff" />
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <>
+              <View>
+                <Text style={styles.headerTitle}>Companies</Text>
+                <Text style={styles.headerSubtitle}>
+                  {role === 'admin' ? 'Admin Portal' : 'Select a company to start chat'}
+                </Text>
+              </View>
+              <View style={styles.headerActions}>
+                <TouchableOpacity
+                  onPress={() => setIsSearchActive(true)}
+                  style={styles.headerIconBtn}
+                >
+                  <MaterialIcons name="search" size={22} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleLogout} style={styles.headerIconBtn}>
+                  <MaterialIcons name="logout" size={22} color="#fff" />
+                </TouchableOpacity>
+                {role === 'admin' && (
+                  <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.headerIconBtn}>
+                    <MaterialIcons name="more-vert" size={24} color="#fff" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </>
           )}
         </View>
-      </View>
+      </LinearGradient>
 
       {/* Admin Menu Modal */}
       <Modal
@@ -405,17 +527,25 @@ const CompanyListScreen = () => {
 
       {loading ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#0052CC" />
-
+          <ActivityIndicator size="large" color="#057A55" />
         </View>
       ) : (
         <FlatList
-          data={rooms}
+          data={filteredRooms}
           keyExtractor={(item) => item.id.toString()}
           renderItem={renderRoomItem}
+          contentContainerStyle={styles.listContainer}
           ListEmptyComponent={
-            <View style={styles.center}>
-              <Text style={styles.emptyText}>No rooms found</Text>
+            <View style={styles.emptyContainer}>
+              <MaterialIcons name="business-off" size={60} color="#94A3B8" />
+              <Text style={styles.emptyText}>
+                {searchQuery ? 'No matching companies' : 'No companies found'}
+              </Text>
+              <Text style={styles.emptySubtext}>
+                {searchQuery 
+                  ? `We couldn't find any company matching "${searchQuery}"`
+                  : 'When companies are created/assigned, they will appear here.'}
+              </Text>
             </View>
           }
         />
@@ -435,14 +565,14 @@ const CompanyListScreen = () => {
           style={{ width: '100%', alignItems: 'center' }}
         >
           <View style={styles.modalCard}>
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 20 }}>
               <Text style={styles.modalTitle}>Create Company</Text>
 
               <Text style={styles.modalLabel}>Company Name</Text>
               <TextInput
                 style={styles.modalInput}
                 placeholder="Enter company name"
-                placeholderTextColor="#999"
+                placeholderTextColor="#94A3B8"
                 value={roomName}
                 onChangeText={setRoomName}
                 autoFocus
@@ -456,14 +586,22 @@ const CompanyListScreen = () => {
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalCreate, creating && { opacity: 0.6 }]}
+                  style={{ flex: 1 }}
                   onPress={handleCreateRoom}
                   disabled={creating}
                 >
-                  {creating
-                    ? <ActivityIndicator color="#fff" size="small" />
-                    : <Text style={styles.modalCreateText}>Create</Text>
-                  }
+                  <LinearGradient
+                    colors={creating ? ['#94A3B8', '#94A3B8'] : ['#057A55', '#0E9F6E']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.modalCreateGradient}
+                  >
+                    {creating ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.modalCreateText}>Create</Text>
+                    )}
+                  </LinearGradient>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -482,7 +620,7 @@ const CompanyListScreen = () => {
       <View style={styles.modalOverlay}>
         <View style={[styles.modalCard, { height: '85%', paddingHorizontal: 0, paddingBottom: 20 }]}>
           <View style={{ paddingHorizontal: 25, marginBottom: 15 }}>
-            <Text style={styles.modalTitle}>Map User</Text>
+            <Text style={styles.modalTitle}>Map User to Company</Text>
           </View>
 
           <View style={{ paddingHorizontal: 25 }}>
@@ -517,12 +655,13 @@ const CompanyListScreen = () => {
               Select Users{selectedMapUsers.length > 0 ? ` (${selectedMapUsers.length} selected)` : ''}
             </Text>
             {loadingUsers ? (
-              <ActivityIndicator color="#0052CC" style={{ marginTop: 20 }} />
+              <ActivityIndicator color="#057A55" style={{ marginTop: 20 }} />
             ) : (
               <FlatList
                 data={allUsers}
                 keyExtractor={(item) => item.id.toString()}
                 showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 10 }}
                 renderItem={({ item }) => (
                   <TouchableOpacity
                     style={[
@@ -545,10 +684,12 @@ const CompanyListScreen = () => {
                         styles.mapUserName,
                         selectedMapUsers.includes(item.id) && styles.mapUserNameActive
                       ]}>{item.name || item.user_id || 'Unknown'}</Text>
-                      <Text style={styles.mapUserRole}>Role: {item.role || 'employee'}</Text>
+                      <View style={styles.roleCapsule}>
+                        <Text style={styles.roleCapsuleText}>{item.role || 'employee'}</Text>
+                      </View>
                     </View>
                     {selectedMapUsers.includes(item.id) && (
-                      <MaterialIcons name="check-circle" size={24} color="#0052CC" />
+                      <MaterialIcons name="check-circle" size={24} color="#057A55" />
                     )}
                   </TouchableOpacity>
                 )}
@@ -568,20 +709,24 @@ const CompanyListScreen = () => {
               <Text style={styles.modalCancelText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[
-                styles.modalCreate,
-                (!selectedMapRoom || selectedMapUsers.length === 0 || mapping) && { opacity: 0.6 }
-              ]}
+              style={{ flex: 1 }}
               onPress={handleMapUser}
               disabled={!selectedMapRoom || selectedMapUsers.length === 0 || mapping}
             >
-              {mapping ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.modalCreateText}>
-                  {selectedMapUsers.length > 1 ? `Map ${selectedMapUsers.length} Users` : 'Map User'}
-                </Text>
-              )}
+              <LinearGradient
+                colors={(!selectedMapRoom || selectedMapUsers.length === 0 || mapping) ? ['#CBD5E1', '#CBD5E1'] : ['#057A55', '#0E9F6E']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.modalCreateGradient}
+              >
+                {mapping ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.modalCreateText}>
+                    {selectedMapUsers.length > 1 ? `Map ${selectedMapUsers.length} Users` : 'Map User'}
+                  </Text>
+                )}
+              </LinearGradient>
             </TouchableOpacity>
           </View>
         </View>
@@ -598,18 +743,19 @@ const CompanyListScreen = () => {
       <View style={styles.modalOverlay}>
         <View style={[styles.modalCard, { height: '85%', paddingHorizontal: 0, paddingBottom: 20 }]}>
           <View style={{ paddingHorizontal: 25, marginBottom: 15 }}>
-            <Text style={styles.modalTitle}>Edit User Mapping</Text>
+            <Text style={styles.modalTitle}>Manage Users</Text>
           </View>
 
           <View style={{ paddingHorizontal: 25, flex: 1 }}>
-            <Text style={styles.modalLabel}>Select User</Text>
+            <Text style={styles.modalLabel}>Select User to Edit</Text>
             {loadingUsers ? (
-              <ActivityIndicator color="#0052CC" style={{ marginTop: 20 }} />
+              <ActivityIndicator color="#057A55" style={{ marginTop: 20 }} />
             ) : (
               <FlatList
                 data={allUsers}
                 keyExtractor={(item) => item.id.toString()}
                 showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 10 }}
                 renderItem={({ item }) => (
                   <View
                     style={[
@@ -631,14 +777,24 @@ const CompanyListScreen = () => {
                         styles.mapUserName,
                         selectedMapUser === item.id && styles.mapUserNameActive
                       ]}>{item.name || item.user_id || 'Unknown'}</Text>
-                      <Text style={styles.mapUserRole}>Role: {item.role || 'employee'}</Text>
+                      <View style={styles.roleCapsule}>
+                        <Text style={styles.roleCapsuleText}>{item.role || 'employee'}</Text>
+                      </View>
                     </View>
                     <TouchableOpacity 
                       onPress={() => openPermissionEdit(item)}
                       style={styles.editIconContainer}
                     >
-                      <MaterialIcons name="edit" size={22} color="#0052CC" />
+                      <MaterialIcons name="edit" size={20} color="#057A55" />
                     </TouchableOpacity>
+                    {role === 'admin' && (
+                      <TouchableOpacity 
+                        onPress={() => handleDeleteUser(item.id)}
+                        style={styles.deleteIconContainer}
+                      >
+                        <MaterialIcons name="delete" size={20} color="#EF4444" />
+                      </TouchableOpacity>
+                    )}
                   </View>
                 )}
               />
@@ -673,21 +829,24 @@ const CompanyListScreen = () => {
           behavior={Platform.OS === 'ios' ? 'padding' : undefined} 
           style={{ width: '100%', alignItems: 'center' }}
         >
-          <View style={[styles.modalCard, { width: '90%', paddingBottom: 30, height: 'auto', borderRadius: 20, marginBottom: 'auto', marginTop: 'auto', maxHeight: '90%' }]}>
+          <View style={[styles.modalCard, { width: '90%', paddingBottom: 25, height: 'auto', borderRadius: 24, marginBottom: 'auto', marginTop: 'auto', maxHeight: '90%' }]}>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               <Text style={styles.modalTitle}>Edit User Details</Text>
               
               <View style={{ alignItems: 'center', marginBottom: 20 }}>
-                <TouchableOpacity onPress={pickEditProfileImage}>
+                <TouchableOpacity onPress={pickEditProfileImage} style={styles.photoUploadContainer}>
                   {editUserProfileImage ? (
                     <Image source={{ uri: editUserProfileImage.uri }} style={styles.editProfileImage} />
                   ) : (
                     <View style={[styles.editProfileImage, styles.editAvatarPlaceholder]}>
-                      <MaterialIcons name="add-a-photo" size={30} color="#0052CC" />
+                      <MaterialIcons name="add-a-photo" size={28} color="#057A55" />
                     </View>
                   )}
+                  <View style={styles.cameraBadge}>
+                    <MaterialIcons name="camera-alt" size={14} color="#fff" />
+                  </View>
                 </TouchableOpacity>
-                <Text style={{ marginTop: 8, color: '#0052CC', fontWeight: '600' }}>Change Photo</Text>
+                <Text style={{ marginTop: 8, color: '#057A55', fontWeight: '600', fontSize: 14 }}>Change Photo</Text>
               </View>
 
               <Text style={styles.modalLabel}>Name</Text>
@@ -696,6 +855,7 @@ const CompanyListScreen = () => {
                 value={editUserName}
                 onChangeText={setEditUserName}
                 placeholder="Enter name"
+                placeholderTextColor="#94A3B8"
               />
 
               <Text style={styles.modalLabel}>User ID</Text>
@@ -704,6 +864,7 @@ const CompanyListScreen = () => {
                 value={editUserCustomId}
                 onChangeText={setEditUserCustomId}
                 placeholder="Enter user id"
+                placeholderTextColor="#94A3B8"
               />
 
               <Text style={styles.modalLabel}>Mobile Number</Text>
@@ -712,6 +873,7 @@ const CompanyListScreen = () => {
                 value={editUserMobile}
                 onChangeText={setEditUserMobile}
                 placeholder="Enter mobile number"
+                placeholderTextColor="#94A3B8"
                 keyboardType="phone-pad"
               />
 
@@ -721,20 +883,21 @@ const CompanyListScreen = () => {
                 value={editUserPasskey}
                 onChangeText={setEditUserPasskey}
                 placeholder="Enter new passkey"
+                placeholderTextColor="#94A3B8"
                 secureTextEntry
               />
 
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15, paddingVertical: 5 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
                 <Text style={[styles.modalLabel, { marginTop: 0 }]}>Can View Previous Messages</Text>
                 <Switch
                   value={canViewPrevMessages === 1}
                   onValueChange={(value) => setCanViewPrevMessages(value ? 1 : 0)}
-                  trackColor={{ false: '#767577', true: '#0052CC' }}
-                  thumbColor={canViewPrevMessages === 1 ? '#fff' : '#f4f3f4'}
+                  trackColor={{ false: '#CBD5E1', true: '#A7F3D0' }}
+                  thumbColor={canViewPrevMessages === 1 ? '#057A55' : '#F1F5F9'}
                 />
               </View>
 
-              <View style={[styles.modalActions, { marginTop: 30 }]}>
+              <View style={[styles.modalActions, { marginTop: 25 }]}>
                 <TouchableOpacity
                   style={styles.modalCancel}
                   onPress={() => setPermissionModalVisible(false)}
@@ -742,15 +905,22 @@ const CompanyListScreen = () => {
                   <Text style={styles.modalCancelText}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modalCreate, updating && { opacity: 0.6 }]}
+                  style={{ flex: 1 }}
                   onPress={handleUpdateUser}
                   disabled={updating}
                 >
-                  {updating ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.modalCreateText}>Update</Text>
-                  )}
+                  <LinearGradient
+                    colors={updating ? ['#94A3B8', '#94A3B8'] : ['#057A55', '#0E9F6E']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.modalCreateGradient}
+                  >
+                    {updating ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.modalCreateText}>Update</Text>
+                    )}
+                  </LinearGradient>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -763,213 +933,288 @@ const CompanyListScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  header: { 
-    padding: 18, 
-    backgroundColor: '#0052CC',
+  // ── Layout ──────────────────────────────────────────────────────────
+  container: { flex: 1, backgroundColor: '#F2F7F4' },
+  header: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    alignItems: 'center',
   },
-  headerTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
+  headerTitle: { color: '#fff', fontSize: 26, fontWeight: '800', letterSpacing: -0.5 },
+  headerSubtitle: { color: 'rgba(255,255,255,0.75)', fontSize: 13, marginTop: 2, fontWeight: '500' },
   headerActions: { flexDirection: 'row', alignItems: 'center' },
-  headerIconBtn: { marginLeft: 12, padding: 4 },
-  companyItem: { flexDirection: 'row', padding: 15, borderBottomWidth: 0.5, borderBottomColor: '#eee', alignItems: 'center' },
-  logoPlaceholder: { 
-    width: 55, 
-    height: 55, 
-    borderRadius: 30, 
-    backgroundColor: '#007AFF', 
-    justifyContent: 'center', 
-    alignItems: 'center' 
+  headerIconBtn: {
+    marginLeft: 8,
+    padding: 9,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
-  logoText: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
-  info: { flex: 1, marginLeft: 15 },
-  listRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  name: { fontSize: 17, fontWeight: 'bold', color: '#000' },
-  time: { fontSize: 12, color: '#666' },
-  msg: { fontSize: 14, color: '#666', marginTop: 3, flex: 0.9 },
-  badge: { backgroundColor: '#3B82F6', width: 20, height: 20, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  listContainer: { padding: 16, paddingTop: 20 },
 
-  badgeText: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 50 },
-  emptyText: { color: '#666', fontSize: 16 },
-  menuOverlay: {
-    flex: 1,
-    backgroundColor: 'transparent',
+  // ── Company Card ─────────────────────────────────────────────────────
+  companyCard: {
+    flexDirection: 'row',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    marginBottom: 12,
+    alignItems: 'center',
+    shadowColor: '#057A55',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.07,
+    shadowRadius: 12,
+    elevation: 3,
   },
+  logoGradient: {
+    width: 54,
+    height: 54,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  logoText: { color: '#fff', fontSize: 22, fontWeight: '800' },
+  info: { flex: 1, marginLeft: 14 },
+  listRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  name: { fontSize: 16, fontWeight: '700', color: '#1E293B', marginBottom: 3 },
+  subtext: { fontSize: 13, color: '#94A3B8', fontWeight: '500' },
+  time: { fontSize: 12, color: '#94A3B8', fontWeight: '600', marginBottom: 6 },
+  cardRight: { alignItems: 'flex-end', marginLeft: 10 },
+  chevronCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 10,
+    backgroundColor: '#E6F4EA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chevron: { marginLeft: 8 },
+
+  // ── Empty / Center ───────────────────────────────────────────────────
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+    marginTop: 60,
+  },
+  emptyText: { color: '#1E293B', fontSize: 18, fontWeight: '700', marginTop: 16 },
+  emptySubtext: { color: '#64748B', fontSize: 14, textAlign: 'center', marginTop: 8, lineHeight: 21 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
+
+  // ── Admin Dropdown Menu ──────────────────────────────────────────────
+  menuOverlay: { flex: 1, backgroundColor: 'transparent' },
   menuContainer: {
     position: 'absolute',
-    right: 15,
+    right: 14,
     backgroundColor: '#fff',
-    borderRadius: 8,
-    paddingVertical: 5,
-    minWidth: 170,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    borderRadius: 18,
+    paddingVertical: 6,
+    minWidth: 200,
+    elevation: 12,
+    shadowColor: '#1E293B',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 15,
+    paddingVertical: 13,
+    paddingHorizontal: 18,
   },
-  menuItemText: {
-    fontSize: 16,
-    color: '#333',
-    marginLeft: 12,
-    fontWeight: '500',
-  },
-  menuDivider: {
-    height: 1,
-    backgroundColor: '#eee',
-    marginHorizontal: 10,
-  },
+  menuItemText: { fontSize: 15, color: '#1E293B', marginLeft: 12, fontWeight: '600' },
+  menuDivider: { height: 1, backgroundColor: '#F1F5F9', marginHorizontal: 14 },
+
+  // ── Modal Base ───────────────────────────────────────────────────────
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(15,23,42,0.65)',
     justifyContent: 'flex-end',
   },
   modalCard: {
     backgroundColor: '#fff',
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 25,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 26,
     paddingBottom: 40,
     width: '100%',
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    elevation: 12,
   },
-  modalTitle: { fontSize: 20, fontWeight: '800', color: '#000', marginBottom: 20 },
-  modalLabel: { fontSize: 13, fontWeight: '600', color: '#555', marginBottom: 8, marginTop: 12 },
+  modalTitle: { fontSize: 22, fontWeight: '800', color: '#0F172A', marginBottom: 20, letterSpacing: -0.3 },
+  modalLabel: { fontSize: 13, fontWeight: '700', color: '#64748B', marginBottom: 8, marginTop: 16, textTransform: 'uppercase', letterSpacing: 0.5 },
   modalInput: {
     borderWidth: 1.5,
-    borderColor: '#e0e0e0',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: '#000',
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    fontSize: 15,
+    color: '#0F172A',
+    backgroundColor: '#F8FAFC',
+    fontWeight: '500',
   },
-  typeRow: { flexDirection: 'row', gap: 12, marginTop: 4 },
+
+  // ── Role Row ─────────────────────────────────────────────────────────
+  typeRow: { flexDirection: 'row', gap: 10, marginTop: 4 },
   typeBtn: {
     flex: 1,
-    padding: 12,
-    borderRadius: 10,
+    paddingVertical: 11,
+    borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#e0e0e0',
+    borderColor: '#E2E8F0',
     alignItems: 'center',
+    backgroundColor: '#F8FAFC',
   },
-  typeBtnActive: { borderColor: '#0052CC', backgroundColor: '#F0F7FF' },
+  typeBtnActive: { borderColor: '#057A55', backgroundColor: '#E6F4EA' },
+  typeBtnText: { fontSize: 14, color: '#64748B', fontWeight: '700' },
+  typeBtnTextActive: { color: '#057A55' },
 
-  typeBtnText: { fontSize: 14, color: '#666', fontWeight: '600' },
-  typeBtnTextActive: { color: '#0052CC' },
-
+  // ── Modal Actions Row ────────────────────────────────────────────────
   modalActions: { flexDirection: 'row', gap: 12, marginTop: 24 },
   modalCancel: {
     flex: 1,
-    padding: 14,
-    borderRadius: 12,
+    paddingVertical: 16,
+    borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: '#e0e0e0',
+    borderColor: '#E2E8F0',
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
   },
-  modalCancelText: { color: '#666', fontWeight: '700', fontSize: 15 },
-  modalCreate: {
+  modalCancelText: { color: '#64748B', fontWeight: '700', fontSize: 15 },
+  modalCreateGradient: {
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
     flex: 1,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: '#0052CC',
-    alignItems: 'center',
-    elevation: 3,
   },
-  modalCreateText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  modalCreateText: { color: '#fff', fontWeight: '800', fontSize: 15, letterSpacing: 0.2 },
+
+  // ── Map Chips (Company Selector) ─────────────────────────────────────
   mapChip: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingVertical: 10,
-    backgroundColor: '#f0f0f0',
-    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 24,
     marginRight: 10,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: 'transparent',
     justifyContent: 'center',
-    height: 40,
+    height: 42,
   },
-  mapChipActive: {
-    backgroundColor: '#F0F7FF',
-    borderColor: '#0052CC',
-  },
-  mapChipText: {
-    color: '#666',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  mapChipTextActive: {
-    color: '#0052CC',
-  },
+  mapChipActive: { backgroundColor: '#E6F4EA', borderColor: '#057A55' },
+  mapChipText: { color: '#64748B', fontWeight: '700', fontSize: 14 },
+  mapChipTextActive: { color: '#057A55' },
+
+  // ── User List Items ──────────────────────────────────────────────────
   mapUserItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#eee',
-    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderWidth: 1.5,
+    borderColor: '#F1F5F9',
+    borderRadius: 16,
     marginBottom: 10,
+    backgroundColor: '#fff',
   },
-  mapUserItemActive: {
-    borderColor: '#0052CC',
-    backgroundColor: '#F8FBFF',
-  },
+  mapUserItemActive: { borderColor: '#057A55', backgroundColor: '#ECFDF5' },
   mapUserAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#0052CC',
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: '#057A55',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
-  mapUserAvatarText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  mapUserImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-  },
-  mapUserName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#333',
-  },
-  mapUserNameActive: {
-    color: '#0052CC',
-  },
-  mapUserRole: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
-  editIconContainer: {
-    padding: 8,
+  mapUserAvatarText: { color: '#fff', fontWeight: '800', fontSize: 17 },
+  mapUserImage: { width: 46, height: 46, borderRadius: 14 },
+  mapUserName: { fontSize: 15, fontWeight: '700', color: '#1E293B' },
+  mapUserNameActive: { color: '#057A55' },
+  roleCapsule: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderRadius: 8,
-    backgroundColor: '#F0F7FF',
+    marginTop: 4,
+  },
+  roleCapsuleText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#64748B',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  // ── Edit / Delete Icons ──────────────────────────────────────────────
+  editIconContainer: {
+    padding: 9,
+    borderRadius: 12,
+    backgroundColor: '#E6F4EA',
+  },
+  deleteIconContainer: {
+    padding: 9,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+    marginLeft: 8,
+  },
+
+  // ── Profile Photo Upload ─────────────────────────────────────────────
+  photoUploadContainer: { position: 'relative' },
+  cameraBadge: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: '#057A55',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2.5,
+    borderColor: '#fff',
   },
   editProfileImage: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    borderWidth: 2,
-    borderColor: '#0052CC',
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 3,
+    borderColor: '#057A55',
   },
   editAvatarPlaceholder: {
-    backgroundColor: '#E1F0FF',
+    backgroundColor: '#E6F4EA',
     justifyContent: 'center',
     alignItems: 'center',
   },
+
+  // ── Search Header ─────────────────────────────────────────────────────
+  searchHeaderContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 42,
+  },
+  searchBackBtn: { paddingRight: 12 },
+  searchBarInput: {
+    flex: 1,
+    fontSize: 17,
+    color: '#fff',
+    paddingVertical: 0,
+    fontWeight: '500',
+  },
+  searchClearBtn: { paddingLeft: 12 },
 });
 
 export default CompanyListScreen;

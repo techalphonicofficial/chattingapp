@@ -4,6 +4,9 @@ import { useNavigation } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import LinearGradient from 'react-native-linear-gradient';
+import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const { width } = Dimensions.get('window');
 
@@ -42,8 +45,18 @@ const LoginScreen = () => {
         const data = await response.json();
 
         if (response.ok && data.status === true) {
-          // data.token, data.id, data.user_id available here
-          navigation.navigate('CompanyListScreen', { token: data.token, role: data.role, userId: data.id });
+          // Store user session for persistent auto-login
+          try {
+            await AsyncStorage.setItem('userToken', data.token);
+            await AsyncStorage.setItem('userRole', data.role || '');
+            await AsyncStorage.setItem('userId', String(data.id));
+          } catch (e) {
+            console.error('Failed to save session:', e);
+          }
+          navigation.reset({
+            index: 0,
+            routes: [{ name: 'CompanyListScreen', params: { token: data.token, role: data.role, userId: data.id } }],
+          });
         } else {
           Alert.alert('Error', data.message || 'Login failed. Please check your credentials.');
           setOtp('');
@@ -61,7 +74,7 @@ const LoginScreen = () => {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       <LinearGradient
-        colors={['#0A2540', '#0052CC', '#4F46E5', '#06B6D4']}
+        colors={['#044E3A', '#057A55', '#0F172A']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.gradient}
@@ -72,31 +85,37 @@ const LoginScreen = () => {
               <View style={styles.logoContainer}>
                 <Image source={require('./techalphonic_logo.png')} style={styles.logoImage} resizeMode="contain" />
               </View>
-              <Text style={styles.title}>{step === 1 ? 'Welcome Back' : 'Secure Passkey'}</Text>
+              <Text style={styles.title}>{step === 1 ? 'Welcome Back' : 'Enter Passkey'}</Text>
               <Text style={styles.subtitle}>
                 {step === 1 
-                  ? 'Enter your User ID to continue' 
-                  : `Enter the passkey for ${mobile}`}
+                  ? 'Sign in to access your workspace' 
+                  : `Enter security passkey for ${mobile}`}
               </Text>
             </View>
 
             <View style={styles.inputCard}>
               <View style={styles.inputWrapper}>
-                {/* {step === 1 && <Text style={styles.prefix}>+91 </Text>} */}
+                <MaterialIcons 
+                  name={step === 1 ? "account-circle" : "lock-outline"} 
+                  size={24} 
+                  color="#057A55" 
+                  style={styles.inputIcon} 
+                />
                 <TextInput
                   style={styles.input}
-                  placeholder={step === 1 ? 'User ID' : 'Enter Passkey'}
-                  placeholderTextColor="#999"
+                  placeholder={step === 1 ? 'Enter User ID' : 'Enter Passkey'}
+                  placeholderTextColor="#94A3B8"
                   keyboardType="default"
                   secureTextEntry={step === 2}
                   value={step === 1 ? mobile : otp}
                   onChangeText={step === 1 ? setMobile : setOtp}
-                  maxLength={step === 1 ? 20 : 10}
+                  maxLength={step === 1 ? 20 : 15}
                   autoFocus
                 />
               </View>
 
               <TouchableOpacity 
+                activeOpacity={0.8}
                 style={[
                   styles.button,
                   ((step === 1 && mobile.trim().length === 0) || (step === 2 && otp.trim().length === 0) || loading) && styles.buttonDisabled
@@ -105,21 +124,30 @@ const LoginScreen = () => {
                 disabled={(step === 1 && mobile.trim().length === 0) || (step === 2 && otp.trim().length === 0) || loading}
               >
                 {loading ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text style={styles.buttonText}>{step === 1 ? 'Get Started' : 'Unlock Chat'}</Text>
+                  <Text style={styles.buttonText}>{step === 1 ? 'Next' : 'Unlock Workspace'}</Text>
                 )}
               </TouchableOpacity>
 
               {step === 2 && (
                 <TouchableOpacity onPress={() => setStep(1)} style={styles.editBtn}>
-                  <Text style={styles.editBtnText}>Edit User ID</Text>
+                  <Text style={styles.editBtnText}>Change User ID</Text>
+                </TouchableOpacity>
+              )}
+
+              {step === 1 && (
+                <TouchableOpacity onPress={() => navigation.navigate('Register')} style={styles.registerLink}>
+                  <Text style={styles.registerLinkText}>Don't have an account? <Text style={styles.registerLinkHighlight}>Register</Text></Text>
                 </TouchableOpacity>
               )}
             </View>
             
             <View style={styles.footer}>
-              <Text style={styles.footerText}>Secure End-to-End Encrypted Chat</Text>
+              <View style={styles.badgeRow}>
+                <MaterialIcons name="security" size={14} color="rgba(255, 255, 255, 0.7)" />
+                <Text style={styles.footerText}> End-to-End Encrypted IAS Portal</Text>
+              </View>
             </View>
           </View>
         </SafeAreaView>
@@ -132,59 +160,74 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   gradient: { flex: 1 },
   safeArea: { flex: 1 },
-  content: { padding: 30, flex: 1, justifyContent: 'space-between' },
-  headerArea: { marginTop: 60, alignItems: 'center' },
+  content: { padding: 24, flex: 1, justifyContent: 'space-between' },
+  headerArea: { marginTop: 40, alignItems: 'center' },
   logoContainer: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
     backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 20,
     overflow: 'hidden',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 8,
-    padding: 15,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 12,
+    elevation: 10,
+    padding: 12,
   },
   logoImage: { width: '100%', height: '100%' },
-  title: { fontSize: 32, fontWeight: '800', color: '#FFFFFF', marginBottom: 10 },
-  subtitle: { fontSize: 16, color: 'rgba(255, 255, 255, 0.85)', textAlign: 'center', lineHeight: 22 },
+  title: { fontSize: 28, fontWeight: '800', color: '#FFFFFF', marginBottom: 8, textAlign: 'center' },
+  subtitle: { fontSize: 14, color: 'rgba(255, 255, 255, 0.8)', textAlign: 'center', lineHeight: 20, paddingHorizontal: 20 },
   inputCard: { 
     backgroundColor: '#FFFFFF', 
-    borderRadius: 25, 
-    padding: 25, 
-    shadowColor: '#0F172A',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.08,
-    shadowRadius: 20,
-    elevation: 6
+    borderRadius: 24, 
+    padding: 24, 
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: '#eee',
-    marginBottom: 30,
-    paddingHorizontal: 5
+    backgroundColor: '#F8FAFC',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 20,
+    paddingHorizontal: 14,
+    height: 56,
   },
-  prefix: { fontSize: 20, fontWeight: '600', color: '#333' },
-  input: { flex: 1, fontSize: 20, paddingVertical: 15, color: '#000', fontWeight: '500' },
-  button: { backgroundColor: '#1E293B', padding: 18, borderRadius: 15, alignItems: 'center' },
+  inputIcon: { marginRight: 10 },
+  input: { flex: 1, fontSize: 16, color: '#0F172A', fontWeight: '600' },
+  button: { 
+    backgroundColor: '#057A55', 
+    height: 54, 
+    borderRadius: 14, 
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#057A55',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
+  },
 
-  buttonDisabled: { backgroundColor: '#CBD5E1' },
-  buttonText: { color: '#FFFFFF', fontSize: 18, fontWeight: 'bold' },
-  editBtn: { marginTop: 20, alignItems: 'center' },
-  editBtnText: { color: '#475569', fontWeight: '600' },
+  buttonDisabled: { backgroundColor: '#CBD5E1', shadowOpacity: 0, elevation: 0 },
+  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  editBtn: { marginTop: 16, alignItems: 'center' },
+  editBtnText: { color: '#057A55', fontWeight: '600', fontSize: 14 },
 
-  footer: { alignItems: 'center', marginBottom: 20 },
-  footerText: { color: 'rgba(255, 255, 255, 0.75)', fontSize: 12 },
-  registerLink: { marginTop: 12 },
-  registerLinkText: { color: 'rgba(255,255,255,0.7)', fontSize: 14 },
-  registerLinkHighlight: { color: '#fff', fontWeight: '700' },
+  footer: { alignItems: 'center', marginBottom: 12 },
+  badgeRow: { flexDirection: 'row', alignItems: 'center' },
+  footerText: { color: 'rgba(255, 255, 255, 0.75)', fontSize: 12, fontWeight: '500' },
+  registerLink: { marginTop: 18, alignItems: 'center' },
+  registerLinkText: { color: '#64748B', fontSize: 14 },
+  registerLinkHighlight: { color: '#057A55', fontWeight: '700' },
 });
 
 export default LoginScreen;

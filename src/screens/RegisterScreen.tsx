@@ -87,7 +87,9 @@ const RegisterScreen = () => {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       <LinearGradient
-        colors={['#F7F8FA', '#EFF2F6']}
+        colors={['#044E3A', '#057A55', '#0F172A']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
         style={styles.gradient}
       >
         <SafeAreaView style={styles.safeArea}>
@@ -109,23 +111,29 @@ const RegisterScreen = () => {
                 </View>
 
                 <View style={styles.inputCard}>
-                  <TouchableOpacity style={styles.avatarContainer} onPress={pickProfileImage}>
+                  <TouchableOpacity style={styles.avatarContainer} onPress={pickProfileImage} activeOpacity={0.8}>
                     {profileImage ? (
-                      <Image source={{ uri: profileImage.uri }} style={styles.avatarImage} />
+                      <View style={styles.avatarWrap}>
+                        <Image source={{ uri: profileImage.uri }} style={styles.avatarImage} />
+                        <View style={styles.cameraBadge}>
+                          <MaterialIcons name="edit" size={14} color="#FFF" />
+                        </View>
+                      </View>
                     ) : (
                       <View style={styles.avatarPlaceholder}>
-                        <MaterialIcons name="add-a-photo" size={32} color="#999" />
-                        <Text style={styles.avatarText}>Profile Photo</Text>
+                        <MaterialIcons name="add-a-photo" size={28} color="#057A55" />
+                        <Text style={styles.avatarText}>Add Photo</Text>
                       </View>
                     )}
                   </TouchableOpacity>
 
                   <Text style={styles.fieldLabel}>Display Name</Text>
                   <View style={styles.inputWrapper}>
+                    <MaterialIcons name="person-outline" size={20} color="#057A55" style={styles.inputIcon} />
                     <TextInput
                       style={styles.input}
                       placeholder="Enter your Name"
-                      placeholderTextColor="#999"
+                      placeholderTextColor="#94A3B8"
                       value={name}
                       onChangeText={setName}
                     />
@@ -133,10 +141,11 @@ const RegisterScreen = () => {
 
                   <Text style={styles.fieldLabel}>User ID</Text>
                   <View style={styles.inputWrapper}>
+                    <MaterialIcons name="badge" size={20} color="#057A55" style={styles.inputIcon} />
                     <TextInput
                       style={styles.input}
                       placeholder="Enter your User ID"
-                      placeholderTextColor="#999"
+                      placeholderTextColor="#94A3B8"
                       autoCapitalize="none"
                       value={userId}
                       onChangeText={setUserId}
@@ -145,10 +154,11 @@ const RegisterScreen = () => {
 
                   <Text style={styles.fieldLabel}>Passkey</Text>
                   <View style={styles.inputWrapper}>
+                    <MaterialIcons name="lock-outline" size={20} color="#057A55" style={styles.inputIcon} />
                     <TextInput
                       style={styles.input}
                       placeholder="Enter your Passkey"
-                      placeholderTextColor="#999"
+                      placeholderTextColor="#94A3B8"
                       secureTextEntry
                       value={passkey}
                       onChangeText={setPasskey}
@@ -172,14 +182,15 @@ const RegisterScreen = () => {
                   </View>
 
                   <TouchableOpacity
+                    activeOpacity={0.8}
                     style={[styles.button, loading && styles.buttonDisabled]}
                     onPress={handleRegister}
                     disabled={loading}
                   >
                     {loading ? (
-                      <ActivityIndicator color="#fff" />
+                      <ActivityIndicator color="#fff" size="small" />
                     ) : (
-                      <Text style={styles.buttonText}>Register</Text>
+                      <Text style={styles.buttonText}>Register Now</Text>
                     )}
                   </TouchableOpacity>
 
@@ -189,7 +200,7 @@ const RegisterScreen = () => {
                 </View>
 
                 <View style={styles.footer}>
-                  <Text style={styles.footerText}>Secure End-to-End Encrypted Chat</Text>
+                  <Text style={styles.footerText}>Secure End-to-End Encrypted IAS Portal</Text>
                 </View>
               </View>
             </ScrollView>
@@ -204,43 +215,46 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   gradient: { flex: 1 },
   safeArea: { flex: 1 },
-  content: { padding: 30, flex: 1, justifyContent: 'space-between' },
-  headerArea: { marginTop: 40, alignItems: 'center' },
-  title: { fontSize: 32, fontWeight: '800', color: '#111827', marginBottom: 10 },
-  subtitle: { fontSize: 16, color: 'rgba(17,24,39,0.7)', textAlign: 'center', lineHeight: 22 },
+  content: { padding: 20, flex: 1, justifyContent: 'space-between' },
+  headerArea: { marginTop: 24, marginBottom: 16, alignItems: 'center' },
+  title: { fontSize: 28, fontWeight: '800', color: '#FFFFFF', marginBottom: 6 },
+  subtitle: { fontSize: 14, color: 'rgba(255, 255, 255, 0.8)', textAlign: 'center' },
   inputCard: {
-    backgroundColor: '#fff',
-    borderRadius: 25,
-    padding: 25,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    padding: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.15,
     shadowRadius: 20,
-    elevation: 10,
+    elevation: 8,
   },
-  avatarContainer: { alignItems: 'center', marginBottom: 15 },
-  avatarPlaceholder: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#f0f0f0', justifyContent: 'center', alignItems: 'center', borderStyle: 'dashed', borderWidth: 1.5, borderColor: '#ccc' },
-  avatarImage: { width: 90, height: 90, borderRadius: 45 },
-  avatarText: { fontSize: 11, color: '#999', marginTop: 4 },
-  fieldLabel: { fontSize: 13, fontWeight: '600', color: '#555', marginBottom: 6, marginTop: 10 },
-  inputWrapper: { borderBottomWidth: 2, borderBottomColor: '#eee', marginBottom: 10, paddingHorizontal: 5 },
-  input: { width: '100%', fontSize: 16, paddingVertical: 10, color: '#000', fontWeight: '500' },
-  roleContainer: { flexDirection: 'row', backgroundColor: '#f0f0f0', borderRadius: 25, padding: 4, marginBottom: 10, marginTop: 4 },
-  roleBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 20 },
-  roleBtnActive: { backgroundColor: '#1E293B' },
+  avatarContainer: { alignItems: 'center', marginBottom: 16 },
+  avatarWrap: { position: 'relative' },
+  avatarPlaceholder: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#F0FDF4', justifyContent: 'center', alignItems: 'center', borderStyle: 'dashed', borderWidth: 1.5, borderColor: '#057A55' },
+  avatarImage: { width: 80, height: 80, borderRadius: 40 },
+  cameraBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#057A55', width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF' },
+  avatarText: { fontSize: 11, color: '#057A55', fontWeight: '600', marginTop: 4 },
+  fieldLabel: { fontSize: 13, fontWeight: '600', color: '#475569', marginBottom: 6, marginTop: 10 },
+  inputWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F8FAFC', borderRadius: 12, borderWidth: 1, borderColor: '#E2E8F0', paddingHorizontal: 12, height: 48, marginBottom: 4 },
+  inputIcon: { marginRight: 8 },
+  input: { flex: 1, fontSize: 15, color: '#0F172A', fontWeight: '500' },
+  roleContainer: { flexDirection: 'row', backgroundColor: '#F1F5F9', borderRadius: 14, padding: 4, marginTop: 4, marginBottom: 12 },
+  roleBtn: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 10 },
+  roleBtnActive: { backgroundColor: '#057A55' },
 
-  roleBtnText: { color: '#666', fontWeight: 'bold', fontSize: 14 },
-  roleBtnTextActive: { color: '#fff' },
-  button: { backgroundColor: '#1E293B', padding: 16, borderRadius: 15, alignItems: 'center', marginTop: 15 },
+  roleBtnText: { color: '#64748B', fontWeight: '600', fontSize: 14 },
+  roleBtnTextActive: { color: '#FFFFFF' },
+  button: { backgroundColor: '#057A55', height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 16 },
 
   buttonDisabled: { backgroundColor: '#CBD5E1' },
-  buttonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  loginBtn: { marginTop: 20, alignItems: 'center' },
-  loginBtnText: { color: '#475569', fontWeight: '500', fontSize: 14 },
-  loginBtnHighlight: { color: '#1E293B', fontWeight: '700' },
+  buttonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  loginBtn: { marginTop: 16, alignItems: 'center' },
+  loginBtnText: { color: '#64748B', fontWeight: '500', fontSize: 14 },
+  loginBtnHighlight: { color: '#057A55', fontWeight: '700' },
 
-  footer: { alignItems: 'center', marginBottom: 20 },
-  footerText: { color: 'rgba(17,24,39,0.55)', fontSize: 12 },
+  footer: { alignItems: 'center', marginVertical: 16 },
+  footerText: { color: 'rgba(255, 255, 255, 0.75)', fontSize: 12 },
 });
 
 export default RegisterScreen;
