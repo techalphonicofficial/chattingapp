@@ -108,9 +108,13 @@ const ContactListScreen = () => {
     // Connect socket to listen for new messages and update last_message in list
     // The backend rejects sockets without a token, so it must be sent here too
     const socket = io(SOCKET_URL, {
-      transports: ['websocket'],
+      transports: ['polling', 'websocket'],
+      secure: true,
       reconnection: true,
       auth: { token },
+      extraHeaders: {
+        Authorization: `Bearer ${token}`,
+      },
     });
     socketRef.current = socket;
 

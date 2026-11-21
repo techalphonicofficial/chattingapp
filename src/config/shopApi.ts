@@ -1,4 +1,4 @@
-export const SHOP_API_BASE = 'https://bulge-payroll-dragonfly.ngrok-free.dev';
+export const SHOP_API_BASE = 'https://yber.in/api';
 
 export const shopHeaders = (token: string) => ({
   accept: '*/*',

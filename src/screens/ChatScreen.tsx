@@ -27,6 +27,7 @@ import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navig
 import { CHAT_SERVER_URL } from '../config/api';
 import { formatClock, formatDayLabel, isSameDay } from '../utils/time';
 import { setActiveChatUser } from '../services/notificationService';
+import { playSentSound, playReceivedSound } from '../services/soundService';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { io, Socket } from 'socket.io-client';
@@ -49,7 +50,7 @@ const SOCKET_URL = CHAT_SERVER_URL;
 const API_BASE_URL = `${SOCKET_URL}/api`;
 
 // Space between the message input bar and the open keyboard
-const KEYBOARD_GAP = 12;
+const KEYBOARD_GAP = 8;
 
 type ChatScreenRouteProp = RouteProp<RootStackParamList, 'Chat'>;
 type NavigationProp = StackNavigationProp<RootStackParamList, 'Chat'>;
@@ -67,6 +68,9 @@ const ChatScreen = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const pageRef = useRef(1);
+  const hasMoreRef = useRef(true);
+  const loadingMoreRef = useRef(false);
   const [isConnected, setIsConnected] = useState(false);
   const [socketStatus, setSocketStatus] = useState('Connecting...');
   const [menuVisible, setMenuVisible] = useState(false);
@@ -74,12 +78,13 @@ const ChatScreen = () => {
   const [exportingPDF, setExportingPDF] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   // Android keyboard handling: with targetSdk 35+/36 the app is edge-to-edge, so
   // adjustResize no longer shrinks the screen and the keyboard covered the input bar.
   // We measure how much the screen actually shrank and pad only the part it didn't.
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
-  const baseHeightRef = useRef(0);
+  const baseHeightRef = useRef(Dimensions.get('window').height);
   const keyboardOpenRef = useRef(false);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -126,9 +131,9 @@ const log = {
       setKeyboardVisible(false);
     });
 
-    // Rotation / window size change: forget the old full height, next layout sets it again
+    // Rotation / window size change: reset to new window height
     const dimSub = Dimensions.addEventListener('change', () => {
-      baseHeightRef.current = 0;
+      baseHeightRef.current = Dimensions.get('window').height;
     });
 
     return () => {
@@ -240,15 +245,14 @@ useEffect(() => {
   log.info('Creating socket...', { roomId });
 
   const socket = io(SOCKET_URL, {
-    transports: ['websocket', 'polling'],
+    transports: ['polling', 'websocket'],
     secure: true,
-    path: '/socket.io/',
     reconnection: true,
     reconnectionAttempts: MAX_RECONNECT_ATTEMPTS,
     reconnectionDelay: 1000,        // wait 1s before first retry
     reconnectionDelayMax: 5000,     // cap retry delay at 5s
     timeout: 20000,
-    forceNew: false,                // reuse engine if possible
+    forceNew: true,
     autoConnect: true,
     auth: {
       token: token,
@@ -261,14 +265,23 @@ useEffect(() => {
   socketRef.current = socket;
 
   // ── Lifecycle events ──────────────────────────────────────────────────────
-  socket.on('connect', () => {
+  const handleConnect = () => {
     reconnectAttempts.current = 0;
     setIsConnected(true);
     setSocketStatus('Online');
-    log.info('Connected', { id: socket.id, transport: socket.io.engine.transport.name });
+    log.info('Connected', { id: socket.id, transport: socket.io?.engine?.transport?.name });
     socket.emit('join_room', roomId);
     markMessagesAsRead();
-  });
+  };
+
+  socket.on('connect', handleConnect);
+
+  // If already connected immediately on mount/reuse
+  if (socket.connected) {
+    handleConnect();
+  } else {
+    socket.connect();
+  }
 
   socket.on('disconnect', (reason) => {
     setIsConnected(false);
@@ -283,6 +296,7 @@ useEffect(() => {
 
   socket.on('reconnect', (attempt) => {
     log.info('Reconnected after attempts:', attempt);
+    setIsConnected(true);
     setSocketStatus('Online');
     socket.emit('join_room', roomId);   // re-join room after reconnect
     markMessagesAsRead();
@@ -295,6 +309,7 @@ useEffect(() => {
   });
 
   socket.on('reconnect_failed', () => {
+    setIsConnected(false);
     setSocketStatus('Connection failed');
     log.error('All reconnect attempts exhausted');
     Alert.alert(
@@ -320,8 +335,12 @@ useEffect(() => {
 
     const isAuthError = err?.message?.toLowerCase().includes('auth');
     if (isAuthError) {
+      setIsConnected(false);
       setSocketStatus('Auth error');
       socket.disconnect();     // don't keep retrying on auth failures
+    } else {
+      setIsConnected(false);
+      setSocketStatus('Reconnecting...');
     }
   });
 
@@ -352,6 +371,11 @@ useEffect(() => {
     }
 
     log.info('Message received:', newMessage.id);
+
+    // Play WhatsApp-like incoming message sound if received from the other contact
+    if (msgSender !== me) {
+      playReceivedSound();
+    }
 
     setMessages((prev) => {
       // Deduplicate
@@ -455,8 +479,12 @@ useEffect(() => {
   // On "load more" (older pages) we prepend to the front of the array.
   const fetchMessages = async (pageNum = 1) => {
     try {
-      if (pageNum === 1) setLoading(true);
-      else setLoadingMore(true);
+      if (pageNum === 1) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+        loadingMoreRef.current = true;
+      }
 
       const response = await fetch(
         `${API_BASE_URL}/messages/chat-with/${contactId}?page=${pageNum}&limit=20`,
@@ -467,13 +495,16 @@ useEffect(() => {
         const data = await response.json();
         if (data.status && Array.isArray(data.messages)) {
           const newMessages = data.messages; // newest-first from API
-          setHasMore(newMessages.length >= 20);
+          const moreAvailable = newMessages.length >= 20;
+          setHasMore(moreAvailable);
+          hasMoreRef.current = moreAvailable;
 
           if (pageNum === 1) {
             // Reverse so index-0 = oldest, last = newest → renders top-to-bottom correctly
             const chronological = [...newMessages].reverse();
             setMessages(chronological);
             setPage(1);
+            pageRef.current = 1;
             // Scroll to bottom after first load
             initialScrollDone.current = false;
           } else {
@@ -481,6 +512,7 @@ useEffect(() => {
             const olderChronological = [...newMessages].reverse();
             setMessages((prev) => [...olderChronological, ...prev]);
             setPage(pageNum);
+            pageRef.current = pageNum;
           }
         }
       }
@@ -489,14 +521,15 @@ useEffect(() => {
     } finally {
       setLoading(false);
       setLoadingMore(false);
+      loadingMoreRef.current = false;
     }
   };
 
-  // Called when user is near the top of the list → load older messages
+  // Auto-called when user scrolls near the top of the chat → loads older messages smoothly
   const loadMoreMessages = () => {
-    if (!loadingMore && hasMore) {
-      fetchMessages(page + 1);
-    }
+    if (loadingMoreRef.current || !hasMoreRef.current) return;
+    loadingMoreRef.current = true;
+    fetchMessages(pageRef.current + 1);
   };
 
   // ─── FETCH ALL MESSAGES FOR PDF EXPORT ────────────────────────────────────
@@ -690,6 +723,11 @@ useEffect(() => {
   const openAttachment = async (url: string) => {
     const fullUrl = getFullUrl(url);
     if (!fullUrl) return;
+    const fileInfo = getFileTypeInfo(fullUrl);
+    if (fileInfo.type === 'image') {
+      setPreviewImage(fullUrl);
+      return;
+    }
     try {
       await Linking.openURL(fullUrl);
     } catch (e) {
@@ -758,6 +796,9 @@ useEffect(() => {
   const sendMessage = async (overriddenText?: string | null, fileData?: any) => {
     const text = overriddenText !== undefined ? overriddenText : inputText.trim();
     if (!text && !fileData) return;
+
+    // Play WhatsApp-like outgoing message sound
+    playSentSound();
 
     let optimisticMsg: any = null;
 
@@ -862,7 +903,7 @@ useEffect(() => {
           fileInfo.type === 'image' ? (
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => openAttachment(fullFileUrl)}
+              onPress={() => setPreviewImage(fullFileUrl)}
             >
               <Image
                 source={{ uri: fullFileUrl }}
@@ -936,12 +977,22 @@ useEffect(() => {
     );
   };
 
-  // Extra bottom space on Android = keyboard height minus whatever the OS already resized.
-  // Old Android (adjustResize works): screen shrinks by the keyboard height -> 0 extra.
-  // Android 15/16 edge-to-edge (no resize): screen stays the same -> full keyboard height.
+  // Android keyboard handling:
+  // If Android OS already resized the window (adjustResize), windowShrink >= 120, so 0 extra padding needed.
+  // If Android OS did NOT resize the window (Android 15+ edge-to-edge), we lift the input bar by the keyboard height.
+  // Including insets.bottom prevents the navigation bar from cutting off the input bar on phones with gesture/nav bars.
+  const windowShrink =
+    keyboardVisible && baseHeightRef.current > 0
+      ? Math.max(0, baseHeightRef.current - containerHeight)
+      : 0;
+
+  const isWindowResizedByOS = windowShrink >= 120;
+
   const androidKeyboardPadding =
-    Platform.OS === 'android' && keyboardVisible && baseHeightRef.current > 0
-      ? Math.max(0, keyboardHeight - Math.max(0, baseHeightRef.current - containerHeight))
+    Platform.OS === 'android' && keyboardVisible
+      ? isWindowResizedByOS
+        ? 0
+        : Math.max(0, keyboardHeight + (insets.bottom > 0 ? insets.bottom : 0) - windowShrink)
       : 0;
 
   // ─── RENDER ────────────────────────────────────────────────────────────────
@@ -950,10 +1001,7 @@ useEffect(() => {
       style={styles.container}
       onLayout={({ nativeEvent }: LayoutChangeEvent) => {
         const h = nativeEvent.layout.height;
-        // Full height = largest height seen while the keyboard is closed. Taking the max
-        // matters because on older Android the screen can shrink just BEFORE the keyboard
-        // event fires; that smaller height must not be mistaken for the full height.
-        if (!keyboardOpenRef.current) {
+        if (!keyboardOpenRef.current && h > 0) {
           baseHeightRef.current = Math.max(baseHeightRef.current, h);
         }
         setContainerHeight(h);
@@ -1071,6 +1119,9 @@ useEffect(() => {
                 paddingHorizontal: 14,
                 paddingVertical: 12,
               }}
+              maintainVisibleContentPosition={{
+                minIndexForVisible: 1,
+              }}
               onLayout={() => {
                 if (!initialScrollDone.current) {
                   scrollToBottom(false);
@@ -1084,26 +1135,20 @@ useEffect(() => {
                 }
               }}
               onScroll={({ nativeEvent }) => {
-                if (nativeEvent.contentOffset.y <= 10 && hasMore && !loadingMore) {
+                // Auto-fetch older messages when scrolling within 180px of top
+                if (nativeEvent.contentOffset.y <= 180 && hasMoreRef.current && !loadingMoreRef.current) {
                   loadMoreMessages();
                 }
               }}
-              scrollEventThrottle={200}
+              scrollEventThrottle={16}
               ListHeaderComponent={() =>
                 loadingMore ? (
-                  <ActivityIndicator
-                    size="small"
-                    color="#057A55"
-                    style={{ marginVertical: 10 }}
-                  />
-                ) : hasMore ? (
-                  <TouchableOpacity
-                    style={styles.loadMoreBtn}
-                    onPress={loadMoreMessages}
-                    disabled={loadingMore}
-                  >
-                    <Text style={styles.loadMoreText}>Load older messages</Text>
-                  </TouchableOpacity>
+                  <View style={{ paddingVertical: 10, alignItems: 'center' }}>
+                    <ActivityIndicator
+                      size="small"
+                      color="#057A55"
+                    />
+                  </View>
                 ) : null
               }
             />
@@ -1242,6 +1287,46 @@ useEffect(() => {
               </View>
             </View>
           </TouchableOpacity>
+        </Modal>
+
+        {/* ── WhatsApp Style Fullscreen Image Viewer Modal ── */}
+        <Modal
+          visible={!!previewImage}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => setPreviewImage(null)}
+          statusBarTranslucent
+        >
+          <View style={styles.imageViewerContainer}>
+            <View style={[styles.imageViewerHeader, { paddingTop: Math.max(insets.top, 14) }]}>
+              <TouchableOpacity
+                style={styles.imageViewerCloseBtn}
+                onPress={() => setPreviewImage(null)}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+              <View style={styles.imageViewerInfo}>
+                <Text style={styles.imageViewerTitle} numberOfLines={1}>
+                  {contact.name || contact.user_id || 'Photo'}
+                </Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.imageViewerBody}
+              activeOpacity={1}
+              onPress={() => setPreviewImage(null)}
+            >
+              {previewImage ? (
+                <Image
+                  source={{ uri: previewImage }}
+                  style={styles.imageViewerImage}
+                  resizeMode="contain"
+                />
+              ) : null}
+            </TouchableOpacity>
+          </View>
         </Modal>
       </ImageBackground>
     </View>
@@ -1556,6 +1641,44 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#8696A0',
     marginTop: 2,
+  },
+  // WhatsApp Style Fullscreen Image Viewer
+  imageViewerContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  imageViewerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingBottom: 14,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+  },
+  imageViewerCloseBtn: {
+    padding: 6,
+    marginRight: 10,
+  },
+  imageViewerInfo: {
+    flex: 1,
+  },
+  imageViewerTitle: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  imageViewerBody: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerImage: {
+    width: '100%',
+    height: '100%',
   },
 });
 
