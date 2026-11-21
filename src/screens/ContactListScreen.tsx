@@ -9,6 +9,7 @@ import { io, Socket } from 'socket.io-client';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { CHAT_SERVER_URL } from '../config/api';
 import { formatListTime, parseServerDate } from '../utils/time';
+import { isOnline, reportAppPresence, UserStatus } from '../services/presenceService';
 
 const BASE_URL = CHAT_SERVER_URL;
 const SOCKET_URL = BASE_URL;
@@ -155,12 +156,26 @@ const ContactListScreen = () => {
       });
     });
 
+    // Someone came online / went offline: update the green dot on that user straight away
+    socket.on('user_status', (status: UserStatus) => {
+      if (!status?.user_id) return;
+      setUsers(prev =>
+        prev.map(u =>
+          String(u.id) === String(status.user_id)
+            ? { ...u, is_online: status.is_online, last_seen: status.last_seen || u.last_seen }
+            : u
+        )
+      );
+    });
+    const stopPresence = reportAppPresence(socket);
+
     // Start polling every 10 seconds for last message updates
     pollingRef.current = setInterval(() => {
       fetchUsersSilent();
     }, 10000);
 
     return () => {
+      stopPresence();
       socket.disconnect();
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
@@ -446,6 +461,7 @@ const ContactListScreen = () => {
               {(item.name || item.user_id || 'U').charAt(0).toUpperCase()}
             </Text>
           )}
+          {isOnline(item.is_online) && <View style={styles.onlineDot} />}
         </View>
         <View style={styles.chatInfo}>
           <View style={styles.topRow}>
@@ -797,6 +813,17 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
   userImage: { width: 52, height: 52, borderRadius: 26 },
+  onlineDot: {
+    position: 'absolute',
+    bottom: 1,
+    right: 1,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#25D366',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
   chatInfo: {
     flex: 1,
     marginLeft: 14,

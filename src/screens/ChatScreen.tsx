@@ -28,6 +28,7 @@ import { CHAT_SERVER_URL } from '../config/api';
 import { formatClock, formatDayLabel, isSameDay } from '../utils/time';
 import { setActiveChatUser } from '../services/notificationService';
 import { playSentSound, playReceivedSound } from '../services/soundService';
+import { isOnline, statusText, reportAppPresence, UserStatus } from '../services/presenceService';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { io, Socket } from 'socket.io-client';
@@ -73,6 +74,10 @@ const ChatScreen = () => {
   const loadingMoreRef = useRef(false);
   const [isConnected, setIsConnected] = useState(false);
   const [socketStatus, setSocketStatus] = useState('Connecting...');
+  // The CONTACT's online / last seen (not our own connection). Starts with what the chat list
+  // had, then the server sends the current value and live changes.
+  const [contactOnline, setContactOnline] = useState<boolean>(isOnline(contact.is_online));
+  const [contactLastSeen, setContactLastSeen] = useState<any>(contact.last_seen ?? null);
   const [menuVisible, setMenuVisible] = useState(false);
   const [attachmentModalVisible, setAttachmentModalVisible] = useState(false);
   const [exportingPDF, setExportingPDF] = useState(false);
@@ -264,6 +269,13 @@ useEffect(() => {
 
   socketRef.current = socket;
 
+  // Online / last seen of the person this chat is with (events about other users are ignored)
+  const applyContactStatus = (status: UserStatus | null) => {
+    if (!status || Number(status.user_id) !== contactId) return;
+    setContactOnline(isOnline(status.is_online));
+    if (status.last_seen) setContactLastSeen(status.last_seen);
+  };
+
   // ── Lifecycle events ──────────────────────────────────────────────────────
   const handleConnect = () => {
     reconnectAttempts.current = 0;
@@ -272,6 +284,8 @@ useEffect(() => {
     log.info('Connected', { id: socket.id, transport: socket.io?.engine?.transport?.name });
     socket.emit('join_room', roomId);
     markMessagesAsRead();
+    // Ask for the contact's status now (also runs again after every reconnect)
+    socket.emit('get_user_status', contactId, applyContactStatus);
   };
 
   socket.on('connect', handleConnect);
@@ -282,6 +296,9 @@ useEffect(() => {
   } else {
     socket.connect();
   }
+
+  socket.on('user_status', applyContactStatus);
+  const stopPresence = reportAppPresence(socket);
 
   socket.on('disconnect', (reason) => {
     setIsConnected(false);
@@ -437,6 +454,8 @@ useEffect(() => {
     socket.off('connect_error');
     socket.off('receive_message');
     socket.off('message_status_update');
+    socket.off('user_status');
+    stopPresence();
     socket.disconnect();
     socketRef.current = null;
     reconnectAttempts.current = 0;
@@ -1031,15 +1050,20 @@ useEffect(() => {
               </Text>
             </View>
           )}
-          {isConnected && <View style={styles.onlineDot} />}
+          {isConnected && contactOnline && <View style={styles.onlineDot} />}
         </View>
 
         <View style={styles.headerInfo}>
           <Text style={styles.headerName} numberOfLines={1}>
             {contact.name || contact.user_id || 'Unknown'}
           </Text>
-          <Text style={[styles.headerStatus, isConnected && { color: '#A7F3D0' }]}>
-            {isConnected ? 'Online' : socketStatus}
+          {/* While we are not connected the contact's status is unknown, so the connection
+              state is shown instead ("Connecting...", "Reconnecting...") */}
+          <Text
+            style={[styles.headerStatus, isConnected && contactOnline && { color: '#A7F3D0' }]}
+            numberOfLines={1}
+          >
+            {isConnected ? statusText(contactOnline, contactLastSeen) : socketStatus}
           </Text>
         </View>
 

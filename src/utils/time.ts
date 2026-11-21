@@ -61,7 +61,20 @@ export const formatListTime = (value: any): string => {
   return formatShortDate(d);
 };
 
-export const isSameDay = (a: any, b: any): boolean => {
+// Chat header: "last seen today at 5:28 PM", "last seen yesterday at 9:10 AM",
+// "last seen Monday at 4:00 PM", "last seen 20 Nov at 4:00 PM". Empty when the time is unknown.
+export const formatLastSeen = (value: any): string => {
+  const d = parseServerDate(value);
+  if (!d) return '';
+  const diff = daysAgo(d);
+  const clock = formatClock(d);
+  if (diff <= 0) return `last seen today at ${clock}`;
+  if (diff === 1) return `last seen yesterday at ${clock}`;
+  if (diff < 7) return `last seen ${WEEKDAYS[d.getDay()]} at ${clock}`;
+  return `last seen ${formatShortDate(d)} at ${clock}`;
+};
+
+export const isSameDay =(a: any, b: any): boolean => {
   const da = parseServerDate(a);
   const db = parseServerDate(b);
   if (!da || !db) return false;
