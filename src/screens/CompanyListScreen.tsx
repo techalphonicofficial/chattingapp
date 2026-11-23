@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, Image, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert, Modal, TextInput, ScrollView, KeyboardAvoidingView, Platform, Switch } from 'react-native';
+import { View, Text, FlatList, Image, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert, Modal, TextInput, ScrollView, KeyboardAvoidingView, Platform, Switch, RefreshControl } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { StackNavigationProp } from '@react-navigation/stack';
@@ -25,6 +25,7 @@ const CompanyListScreen = () => {
 
   const [rooms, setRooms] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [isSearchActive, setIsSearchActive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [createModalVisible, setCreateModalVisible] = useState(false);
@@ -60,9 +61,10 @@ const CompanyListScreen = () => {
     consumePendingNotification();
   }, []);
 
-  const fetchRooms = async () => {
+  // isPullRefresh: list stays on screen, only the pull-down spinner is shown
+  const fetchRooms = async (isPullRefresh = false) => {
     try {
-      setLoading(true);
+      if (isPullRefresh) setRefreshing(true); else setLoading(true);
       const response = await fetch('https://yber.in/api/rooms', {
         method: 'GET',
         headers: {
@@ -82,8 +84,11 @@ const CompanyListScreen = () => {
       Alert.alert('Error', 'Something went wrong while fetching rooms');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
+
+  const onRefresh = () => fetchRooms(true);
 
   const handleCompanySelect = (room: any) => {
     navigation.navigate('ChatList' as any, { room, token, userId, role });
@@ -146,7 +151,8 @@ const CompanyListScreen = () => {
       });
       const data = await response.json();
       if (data.status && Array.isArray(data.users)) {
-        setAllUsers(data.users);
+        // the logged-in admin is never shown in their own user lists
+        setAllUsers(data.users.filter((u: any) => String(u.id) !== String(userId)));
       }
     } catch (error) {
       console.error(error);
@@ -347,7 +353,10 @@ const CompanyListScreen = () => {
   const pickEditProfileImage = async () => {
     const result = await launchImageLibrary({
       mediaType: 'photo',
-      quality: 1,
+      // keep the base64 payload small, full-size photos made the update request fail
+      quality: 0.7,
+      maxWidth: 800,
+      maxHeight: 800,
       includeBase64: true,
     });
     if (result.assets && result.assets.length > 0) {
@@ -363,7 +372,8 @@ const CompanyListScreen = () => {
     setEditUserProfileImage(user.profile_image ? { uri: user.profile_image } : null);
     setEditUserRole(user.role || 'employee');
     setEditUserPasskey(''); // Keep passkey empty by default for security
-    setCanViewPrevMessages(user.can_view_previous_messages || 0);
+    // backend now returns the real setting (default 1). The old "|| 0" made every save archive the user's chats.
+    setCanViewPrevMessages(Number(user.can_view_previous_messages ?? 1) ? 1 : 0);
     setPermissionModalVisible(true);
   };
 
@@ -532,6 +542,19 @@ const CompanyListScreen = () => {
               <MaterialIcons name="edit" size={20} color="#333" />
               <Text style={styles.menuItemText}>Edit User</Text>
             </TouchableOpacity>
+
+            <View style={styles.menuDivider} />
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => {
+                setMenuVisible(false);
+                navigation.navigate('AdminChats', { token });
+              }}
+            >
+              <MaterialIcons name="forum" size={20} color="#333" />
+              <Text style={styles.menuItemText}>All Chats</Text>
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -545,7 +568,16 @@ const CompanyListScreen = () => {
           data={filteredRooms}
           keyExtractor={(item) => item.id.toString()}
           renderItem={renderRoomItem}
-          contentContainerStyle={styles.listContainer}
+          // flexGrow keeps pull-to-refresh working even when the list is empty
+          contentContainerStyle={[styles.listContainer, filteredRooms.length === 0 && { flexGrow: 1 }]}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#057A55']}
+              tintColor="#057A55"
+            />
+          }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <MaterialIcons name="business-off" size={60} color="#94A3B8" />

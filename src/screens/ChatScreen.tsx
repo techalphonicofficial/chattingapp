@@ -196,7 +196,7 @@ const log = {
           PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
           {
             title: 'Microphone Permission',
-            message: 'Chattingapp needs microphone access to convert voice to text.',
+            message: 'TechAlphonicChat needs microphone access to convert voice to text.',
             buttonNeutral: 'Ask Me Later',
             buttonNegative: 'Cancel',
             buttonPositive: 'OK',

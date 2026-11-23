@@ -80,7 +80,8 @@ const ContactListScreen = () => {
       });
       const data = await response.json();
       if (data.status && Array.isArray(data.users)) {
-        setUsers(sortByLatestChat(data.users));
+        // never show the logged-in user in their own list (no chat with yourself)
+        setUsers(sortByLatestChat(data.users.filter((u: any) => String(u.id) !== String(userId))));
       }
     } catch (error) {
       console.error('Silent fetch error:', error);
@@ -203,7 +204,8 @@ const ContactListScreen = () => {
       });
       const data = await response.json();
       if (data.status && Array.isArray(data.users)) {
-        setUsers(sortByLatestChat(data.users));
+        // never show the logged-in user in their own list (no chat with yourself)
+        setUsers(sortByLatestChat(data.users.filter((u: any) => String(u.id) !== String(userId))));
       } else {
         Alert.alert('Error', 'Failed to fetch users');
       }
@@ -228,7 +230,7 @@ const ContactListScreen = () => {
       });
       const data = await response.json();
       if (data.status && Array.isArray(data.users)) {
-        setAllUsers(data.users);
+        setAllUsers(data.users.filter((u: any) => String(u.id) !== String(userId)));
       } else {
         Alert.alert('Error', 'Failed to fetch all users');
       }
@@ -385,23 +387,19 @@ const ContactListScreen = () => {
   };
 
   const handleUpdateProfile = async () => {
-    if (!profilePasskey.trim()) {
-      Alert.alert('Error', 'Please enter a passkey');
+    if (!profileName.trim() && !profilePasskey.trim()) {
+      Alert.alert('Error', 'Please enter a name or a new passkey');
       return;
     }
 
     try {
       setIsUpdating(true);
 
-      const body = {
-        name: profileName,
-        user_id: currentUser?.user_id || userId,
-        mobile_number: currentUser?.mobile_number || "",
-        profile_image: currentUser?.profile_image || "",
-        passkey: profilePasskey,
-        role: profileRole,
-        can_view_previous_messages: currentUser?.can_view_previous_messages ?? 0
-      };
+      // Send only what this screen edits. Earlier it also sent user_id/role/can_view_previous_messages:
+      // a non-admin got "Forbidden" and an admin's chats were archived on every save.
+      const body: any = { name: profileName.trim() };
+      if (profilePasskey.trim()) body.passkey = profilePasskey.trim();
+      if (role === 'admin') body.role = profileRole;
 
       console.log('Updating profile with body:', JSON.stringify(body, null, 2));
 
@@ -645,16 +643,19 @@ const ContactListScreen = () => {
               onChangeText={setProfileName}
             />
 
-            <Text style={styles.fieldLabel}>Passkey</Text>
+            <Text style={styles.fieldLabel}>New Passkey (optional)</Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="Enter Passkey"
+              placeholder="Leave empty to keep current passkey"
               placeholderTextColor="#999"
               secureTextEntry
+              maxLength={15}
               value={profilePasskey}
               onChangeText={setProfilePasskey}
             />
 
+            {/* Only admins can change roles, so employees don't see the picker */}
+            {role === 'admin' && (<>
             <Text style={styles.fieldLabel}>Role</Text>
             <View style={styles.typeContainer}>
               <TouchableOpacity
@@ -670,6 +671,7 @@ const ContactListScreen = () => {
                 <Text style={[styles.typeBtnText, profileRole === 'admin' && styles.typeBtnTextActive]}>Admin</Text>
               </TouchableOpacity>
             </View>
+            </>)}
 
             <View style={styles.modalButtons}>
               <TouchableOpacity
