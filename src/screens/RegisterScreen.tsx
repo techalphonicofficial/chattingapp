@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -30,6 +31,25 @@ const RegisterScreen = () => {
   const [profileImage, setProfileImage] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
+  // Logged-in user's role/token. Only an admin may pick a role; everyone else registers as employee.
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [storedRole, storedToken] = await Promise.all([
+          AsyncStorage.getItem('userRole'),
+          AsyncStorage.getItem('userToken'),
+        ]);
+        setIsAdmin(storedRole === 'admin');
+        setAuthToken(storedToken);
+      } catch (e) {
+        setIsAdmin(false);
+      }
+    })();
+  }, []);
+
   const pickProfileImage = async () => {
     const result = await launchImageLibrary({ mediaType: 'photo', quality: 1 });
     if (result.assets && result.assets.length > 0) {
@@ -49,7 +69,7 @@ const RegisterScreen = () => {
       formData.append('user_id', userId.trim());
       formData.append('name', name.trim());
       formData.append('passkey', passkey.trim());
-      formData.append('role', role);
+      formData.append('role', isAdmin ? role : 'employee');
 
       if (profileImage) {
         formData.append('profile_image', {
@@ -63,6 +83,8 @@ const RegisterScreen = () => {
         method: 'POST',
         headers: {
           'accept': '*/*',
+          // backend allows creating an admin only when the request carries an admin token
+          ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
         },
         body: formData,
       });
@@ -165,6 +187,8 @@ const RegisterScreen = () => {
                     />
                   </View>
 
+                  {/* Role choice is shown only to admins */}
+                  {isAdmin && (<>
                   <Text style={styles.fieldLabel}>Role</Text>
                   <View style={styles.roleContainer}>
                     <TouchableOpacity
@@ -180,6 +204,7 @@ const RegisterScreen = () => {
                       <Text style={[styles.roleBtnText, role === 'admin' && styles.roleBtnTextActive]}>Admin</Text>
                     </TouchableOpacity>
                   </View>
+                  </>)}
 
                   <TouchableOpacity
                     activeOpacity={0.8}
