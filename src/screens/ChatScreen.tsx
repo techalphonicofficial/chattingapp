@@ -26,6 +26,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { CHAT_SERVER_URL } from '../config/api';
 import { formatClock, formatDayLabel, isSameDay } from '../utils/time';
+import { toHinglish } from '../utils/hinglish';
 import { setActiveChatUser } from '../services/notificationService';
 import { playSentSound, playReceivedSound } from '../services/soundService';
 import { isOnline, statusText, reportAppPresence, UserStatus } from '../services/presenceService';
@@ -153,7 +154,8 @@ const log = {
     const resultsSub = addSpeechResultsListener((spokenText: string) => {
       log.info('Speech recognized:', spokenText);
       setIsListening(false);
-      const text = spokenText ? spokenText.trim() : '';
+      // Recognizer is hi-IN and returns Devanagari; chats are typed in Roman Hinglish
+      const text = spokenText ? toHinglish(spokenText.trim()) : '';
       if (text) {
         const currentInput = inputTextRef.current.trim();
         const fullMessage = currentInput ? `${currentInput} ${text}` : text;

@@ -51,6 +51,8 @@ const CompanyListScreen = () => {
   const [editUserProfileImage, setEditUserProfileImage] = useState<any>(null);
   const [editUserRole, setEditUserRole] = useState('employee');
   const [editUserPasskey, setEditUserPasskey] = useState('');
+  const [showEditPasskey, setShowEditPasskey] = useState(false);
+  const [manageSearch, setManageSearch] = useState('');
   const [updating, setUpdating] = useState(false);
 
   useEffect(() => {
@@ -240,25 +242,36 @@ const CompanyListScreen = () => {
 
   const handleUpdateUser = async () => {
     if (!selectedMapUser) return;
+    const loginId = editUserCustomId.trim();
+    const newPasskey = editUserPasskey.trim();
+    if (!loginId) {
+      Alert.alert('Validation', 'Login ID cannot be empty.');
+      return;
+    }
+    if (/\s/.test(loginId)) {
+      Alert.alert('Validation', 'Login ID cannot contain spaces.');
+      return;
+    }
     try {
       setUpdating(true);
-      
+
       // Prepare the body exactly like the curl example
       const body: any = {
         name: editUserName,
-        user_id: editUserCustomId,
+        user_id: loginId,
         mobile_number: editUserMobile,
         profile_image: (editUserProfileImage && editUserProfileImage.uri && editUserProfileImage.uri.startsWith('http')) 
           ? editUserProfileImage.uri 
           : (editUserProfileImage && editUserProfileImage.base64)
             ? `data:${editUserProfileImage.type || 'image/jpeg'};base64,${editUserProfileImage.base64}`
             : "",
-        passkey: editUserPasskey || "", // Server might require this
+        passkey: newPasskey, // empty = keep the current passkey
         role: editUserRole,
         can_view_previous_messages: canViewPrevMessages,
       };
 
-      console.log('Updating user with body:', JSON.stringify(body, null, 2));
+      // never log the passkey / image data
+      console.log('Updating user', selectedMapUser, { user_id: body.user_id, name: body.name });
 
       const response = await fetch(`https://yber.in/api/auth/users/${selectedMapUser}`, {
         method: 'PUT',
@@ -283,8 +296,11 @@ const CompanyListScreen = () => {
       }
 
       if (data.status || response.ok) {
-        Alert.alert('Success', data.message || 'User updated successfully!');
+        // Show the admin exactly what to tell the user
+        const credentials = `\n\nLogin ID: ${loginId}` + (newPasskey ? `\nNew Passkey: ${newPasskey}` : '');
+        Alert.alert('Success', (data.message || 'User updated successfully!') + credentials);
         setPermissionModalVisible(false);
+        setShowEditPasskey(false);
         setEditUserName('');
         setEditUserMobile('');
         setEditUserProfileImage(null);
@@ -372,6 +388,7 @@ const CompanyListScreen = () => {
     setEditUserProfileImage(user.profile_image ? { uri: user.profile_image } : null);
     setEditUserRole(user.role || 'employee');
     setEditUserPasskey(''); // Keep passkey empty by default for security
+    setShowEditPasskey(false);
     // backend now returns the real setting (default 1). The old "|| 0" made every save archive the user's chats.
     setCanViewPrevMessages(Number(user.can_view_previous_messages ?? 1) ? 1 : 0);
     setPermissionModalVisible(true);
@@ -791,11 +808,27 @@ const CompanyListScreen = () => {
 
           <View style={{ paddingHorizontal: 25, flex: 1 }}>
             <Text style={styles.modalLabel}>Select User to Edit</Text>
+            {/* find a user by name / login ID / mobile, e.g. when someone forgot their login ID */}
+            <TextInput
+              style={[styles.modalInput, { marginBottom: 10 }]}
+              value={manageSearch}
+              onChangeText={setManageSearch}
+              placeholder="Search by name, login ID or mobile"
+              placeholderTextColor="#94A3B8"
+              autoCapitalize="none"
+            />
             {loadingUsers ? (
               <ActivityIndicator color="#057A55" style={{ marginTop: 20 }} />
             ) : (
               <FlatList
-                data={allUsers}
+                data={allUsers.filter((u) => {
+                  const q = manageSearch.trim().toLowerCase();
+                  if (!q) return true;
+                  return [u.name, u.user_id, u.mobile_number].some((v) => String(v || '').toLowerCase().includes(q));
+                })}
+                ListEmptyComponent={
+                  <Text style={{ textAlign: 'center', color: '#94A3B8', marginTop: 20 }}>No users found</Text>
+                }
                 keyExtractor={(item) => item.id.toString()}
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={{ paddingBottom: 10 }}
@@ -820,11 +853,15 @@ const CompanyListScreen = () => {
                         styles.mapUserName,
                         selectedMapUser === item.id && styles.mapUserNameActive
                       ]}>{item.name || item.user_id || 'Unknown'}</Text>
+                      {/* login ID shown to admin (long-press to copy) */}
+                      <Text selectable style={{ fontSize: 13, color: '#334155', marginTop: 2 }}>
+                        Login ID: <Text style={{ fontWeight: '700', color: '#057A55' }}>{item.user_id}</Text>
+                      </Text>
                       <View style={styles.roleCapsule}>
                         <Text style={styles.roleCapsuleText}>{item.role || 'employee'}</Text>
                       </View>
                     </View>
-                    <TouchableOpacity 
+                    <TouchableOpacity
                       onPress={() => openPermissionEdit(item)}
                       style={styles.editIconContainer}
                     >
@@ -901,13 +938,16 @@ const CompanyListScreen = () => {
                 placeholderTextColor="#94A3B8"
               />
 
-              <Text style={styles.modalLabel}>User ID</Text>
+              <Text style={styles.modalLabel}>Login ID (user logs in with this)</Text>
               <TextInput
                 style={styles.modalInput}
                 value={editUserCustomId}
                 onChangeText={setEditUserCustomId}
-                placeholder="Enter user id"
+                placeholder="Enter login id"
                 placeholderTextColor="#94A3B8"
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={20}
               />
 
               <Text style={styles.modalLabel}>Mobile Number</Text>
@@ -920,15 +960,30 @@ const CompanyListScreen = () => {
                 keyboardType="phone-pad"
               />
 
-              <Text style={styles.modalLabel}>Passkey (Leave empty if no change)</Text>
-              <TextInput
-                style={styles.modalInput}
-                value={editUserPasskey}
-                onChangeText={setEditUserPasskey}
-                placeholder="Enter new passkey"
-                placeholderTextColor="#94A3B8"
-                secureTextEntry
-              />
+              <Text style={styles.modalLabel}>New Passkey (leave empty to keep current)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <TextInput
+                  style={[styles.modalInput, { flex: 1, paddingRight: 44 }]}
+                  value={editUserPasskey}
+                  onChangeText={setEditUserPasskey}
+                  placeholder="Set a new passkey for this user"
+                  placeholderTextColor="#94A3B8"
+                  secureTextEntry={!showEditPasskey}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={15}
+                />
+                {/* admin can see what they type, so they can tell the user */}
+                <TouchableOpacity
+                  onPress={() => setShowEditPasskey(v => !v)}
+                  style={{ position: 'absolute', right: 10, padding: 6 }}
+                >
+                  <MaterialIcons name={showEditPasskey ? 'visibility-off' : 'visibility'} size={20} color="#64748B" />
+                </TouchableOpacity>
+              </View>
+              <Text style={{ fontSize: 12, color: '#64748B', marginTop: 4 }}>
+                Old passkey cannot be seen (it is stored encrypted). Set a new one if the user forgot it.
+              </Text>
 
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 20, paddingVertical: 10, borderTopWidth: 1, borderTopColor: '#F1F5F9' }}>
                 <Text style={[styles.modalLabel, { marginTop: 0 }]}>Can View Previous Messages</Text>
